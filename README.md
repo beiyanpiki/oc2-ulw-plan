@@ -2,13 +2,12 @@
 
 A lightweight **Plan → Spec → Execute** workflow for OpenCode V2.
 
-It keeps the useful discipline from `dsh-ulw-plan` — explore first, freeze one
+It keeps the useful discipline of explore → plan → execute — explore first, freeze one
 executable spec, require independent plan review, record real evidence, and
-verify the landed product — without porting the DSH host, dual-review
-coordinator, execution lease, or Codex compatibility layer.
+verify the landed product — while remaining a small OpenCode V2 plugin.
 
 Verified against **OpenCode 2.2.5** on Linux. The package is not affiliated with
-OpenCode or with the upstream project.
+OpenCode or with oh-my-openagent.
 
 ## What it gives you
 
@@ -277,6 +276,6 @@ default verification because it needs a configured provider and can spend money.
 
 ## Attribution
 
-The workflow was inspired by `dsh-ulw-plan`, an MIT-licensed DSH port of
-`oh-my-openagent` concepts. This repository is a fresh OpenCode V2
-implementation; see `NOTICE`.
+The workflow was inspired by the explore → plan → execute ideas of
+`oh-my-openagent`. This repository is an independent OpenCode V2
+implementation.
