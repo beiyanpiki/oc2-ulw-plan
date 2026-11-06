@@ -21,7 +21,8 @@ export function roleInvocations(invocations, role, target) {
         .filter((invocation) => {
         if (invocation.role !== role)
             return false;
-        if (target.specId !== undefined && invocation.specId !== target.specId)
+        const key = invocation.budgetKey ?? invocation.specId;
+        if (target.specId !== undefined && key !== target.specId)
             return false;
         if (target.runId !== undefined && invocation.runId !== target.runId)
             return false;

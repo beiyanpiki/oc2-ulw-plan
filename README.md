@@ -18,8 +18,12 @@ OpenCode or with oh-my-openagent.
 - `/ulw-execute <spec-id>` — authorize and execute a published spec.
 - `/ulw-execute --resume <run-id>` — resume a paused run after checking the
   workspace and lock.
-- `/ulw-status [spec-id|run-id]` — show Host-computed state, evidence, roles and
-  the next action.
+- `/ulw-execute --recover [<spec-id>] --takeover` — take over a paused or
+  orphaned run whose owner session is idle or interrupted.
+- `/ulw-status [spec-id|run-id] [--diagnose]` — show Host-computed state,
+  evidence, roles, the next action and recent failures.
+- `oc2-ulw-plan diagnose --project <dir>` — validate every spec on disk and
+  print the lock, artifacts and recent diagnostics.
 - Optional `--strict`, `--consult`, `--parallel` and `--worktree auto|path`.
 
 The spec is a contract, the run is mutable state, and evidence is recorded
@@ -27,6 +31,30 @@ separately. A model cannot approve a plan or mark a run successful by writing
 text.
 
 ## Install
+
+### From npm
+
+The published package installs the same plugin, agent profiles and CLI. It is
+the option to use when OpenCode cannot resolve a Git/GitHub package specifier.
+
+```bash
+npm install -g oc2-ulw-plan
+oc2-ulw-plan init --global --plugin oc2-ulw-plan
+```
+
+Project-local:
+
+```bash
+npm install -D oc2-ulw-plan
+npx oc2-ulw-plan init --project /path/to/project --plugin oc2-ulw-plan
+```
+
+If OpenCode cannot resolve the bare package name in your setup, pass the
+installed path instead:
+
+```bash
+oc2-ulw-plan init --global --plugin "$(npm root -g)/oc2-ulw-plan"
+```
 
 ### From a GitHub release
 
@@ -47,7 +75,7 @@ curl -fsSL https://raw.githubusercontent.com/beiyanpiki/oc2-ulw-plan/main/script
 Or run the script from a checkout:
 
 ```bash
-./scripts/install-release.sh --version v0.1.2 --global
+./scripts/install-release.sh --version v0.2.0 --global
 ```
 
 ### From a checkout
@@ -69,6 +97,7 @@ node dist/cli.js init --project /path/to/project --plugin /absolute/path/to/oc2-
 
 ```bash
 node dist/cli.js doctor --project /path/to/project --plugin oc2-ulw-plan
+node dist/cli.js diagnose --project /path/to/project
 node dist/cli.js uninstall --project /path/to/project
 ```
 
@@ -97,9 +126,10 @@ worktree: install globally, or keep `.opencode/agents/` committed.
 ## Roles and budgets
 
 - **Planner** explores, writes the spec, obtains D, and stops.
+- **A Explorer** — code facts, two invocations per spec. It may target a draft
+  before an executable spec exists, or run with only an `assignment`.
 - **Executor** implements directly by default. `--parallel` allows scoped F
   workers for independent, non-overlapping tasks.
-- **A Explorer** — code facts, two invocations per spec.
 - **B Librarian** — external facts and primary sources, two per spec.
 - **C Consultant** — one pre-planning gap analysis per spec.
 - **D Practical Reviewer** — required for every published spec, two rounds.
@@ -114,8 +144,18 @@ approval fields. A worker report is a completion claim, never approval.
 
 ## Spec format
 
-Create `.opencode/ulw/specs/<id>.md` through `ulw_spec action=write`. A minimal
-spec looks like this:
+Create `.opencode/ulw/specs/<id>.md` through `ulw_spec action=write`. Call
+`ulw_spec action=template` for the complete key reference and a valid example;
+`ulw_spec action=begin` prints the same reference automatically.
+
+`write` validates the whole file before it is usable but still **saves** the
+content when it is invalid. The response lists every structural error, so a
+planner can repair the file with `ulw_spec action=patch` (`edits: [{old, new}]`)
+instead of regenerating a large document after the first mistake. Invalid files
+stay in `draft` status and can never be published or executed. For a large spec,
+start from a small valid skeleton and grow it with `action=patch`.
+
+A minimal spec looks like this:
 
 ```markdown
 ---
@@ -178,6 +218,23 @@ Validation rules include:
 The whole spec file hash is the version. Published specs are frozen; use
 `ulw_spec action=reopen` before revising. A revised spec needs fresh D/E
 approvals.
+
+## Diagnostics
+
+Every failed `ulw_*` tool call and every invalid spec write is appended to
+`.opencode/ulw/diagnostics.jsonl` (rotated at 512 KiB). Entries record the
+session, agent, tool, action, error code and a short message, never the spec
+content.
+
+- `/ulw-status --diagnose` prints the latest entries next to Host state.
+- `ulw_diagnose` returns a read-only Host snapshot of specs, runs, role
+  invocations, the workspace lock and recent failures.
+- `oc2-ulw-plan diagnose --project <dir>` validates every spec on disk, reports
+  drafts, inspects the workspace lock and prints recent diagnostics.
+- `ulw_run` status shows the owner session and warns when a running run is
+  orphaned (owner idle, interrupted or missing).
+- `/ulw-execute --recover <spec-id> --takeover` transfers the lock and run
+  ownership when the previous owner is idle or interrupted.
 
 ## Execution guarantees
 
@@ -256,15 +313,28 @@ call a model.
 `test:smoke` is reserved for real-model smoke tests and is not part of the
 default verification because it needs a configured provider and can spend money.
 
+## Releases and CI
+
+- `.github/workflows/ci.yml` runs lint, unit/integration tests and the build on
+  pushes to `main` and on pull requests.
+- `.github/workflows/release.yml` runs on `v*` tags. It re-runs the checks,
+  builds `npm pack`, creates or updates the GitHub release with the tarball and
+  `scripts/install-release.sh`, and publishes the tarball to npm.
+- npm publishing requires the repository secret `NPM_TOKEN`: an npm automation
+  or granular token with publish rights and 2FA bypass. Without it the release
+  job still creates the GitHub release and skips the npm step.
+- To cut a release: update `package.json`, commit, then
+  `git tag vX.Y.Z && git push origin main --tags`. The tag must match the
+  package version; the workflow refuses a mismatch.
+
 ## Known limits
 
 - The host integration is verified on OpenCode 2.2.5/Linux; older versions may
   not have the same plugin contract.
-- OpenCode 2.2.5's `opencode plugin add` currently fails for Git package
-  specifiers in this environment because its bundled npm cannot prepare Git
-  dependencies. Use the release installer (which writes an explicit local
-  plugin path) or configure a local plugin directory; npm-registry installation
-  can be enabled once the package is published to an accessible registry.
+- OpenCode 2.2.5's `opencode plugin add` can fail for Git package specifiers
+  because its bundled npm cannot prepare Git dependencies. Install from the npm
+  registry (`npm install -g oc2-ulw-plan`) or use the release installer, which
+  writes an explicit local plugin path.
 - Procedure checks require a capable verifier and a real surface. Missing tools
   make the run `inconclusive`, not successful.
 - The current worktree flow requires profiles to be discoverable from the

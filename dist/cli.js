@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseJsonc, modify, applyEdits } from "jsonc-parser";
+import { analyzeSpec, lintSpec, verifySpecPaths } from "./core/spec.js";
+import { readDiagnostics, formatDiagnostics } from "./io/diagnostics.js";
+import { pidAlive, readLock } from "./io/lock.js";
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PROFILE_NAMES = ["ulw-plan", "ulw-exec", "ulw-readonly", "ulw-verifier", "ulw-worker"];
 const DEFAULT_PLUGIN = "oc2-ulw-plan";
@@ -209,6 +212,89 @@ async function doctor(input) {
     else
         console.log("ok");
 }
+async function diagnose(input) {
+    const root = join(input.project, ".opencode", "ulw");
+    const specsDir = join(root, "specs");
+    const draftsDir = join(root, "drafts");
+    const listMarkdown = async (directory) => {
+        try {
+            return (await readdir(directory)).filter((entry) => entry.endsWith(".md")).map((entry) => entry.slice(0, -3)).sort();
+        }
+        catch (error) {
+            if (error.code === "ENOENT")
+                return [];
+            throw error;
+        }
+    };
+    const specIDs = await listMarkdown(specsDir);
+    const draftIDs = await listMarkdown(draftsDir);
+    console.log("oc2-ulw-plan diagnose");
+    console.log(`project: ${input.project}`);
+    console.log(`artifacts: ${root}`);
+    let specErrors = 0;
+    console.log("\n## Specs");
+    if (specIDs.length === 0)
+        console.log("- none");
+    for (const id of specIDs) {
+        const path = join(specsDir, `${id}.md`);
+        const content = await readFile(path, "utf8");
+        const analysis = analyzeSpec(content);
+        const diagnostics = [...analysis.diagnostics];
+        if (analysis.parsed !== undefined) {
+            diagnostics.push(...lintSpec(analysis.parsed, false));
+            diagnostics.push(...(await verifySpecPaths(analysis.parsed.spec, input.project)));
+        }
+        const errors = diagnostics.filter((entry) => entry.severity === "error");
+        const warnings = diagnostics.filter((entry) => entry.severity === "warning");
+        specErrors += errors.length;
+        console.log(`- ${id}: ${errors.length === 0 ? "valid" : `INVALID (${errors.length} errors)`}${warnings.length === 0 ? "" : `, ${warnings.length} warnings`}${draftIDs.includes(id) ? " [draft copy]" : ""}`);
+        for (const entry of errors.slice(0, 6))
+            console.log(`    error ${entry.code}: ${entry.message}`);
+        for (const entry of warnings.slice(0, 3))
+            console.log(`    warning ${entry.code}: ${entry.message}`);
+    }
+    console.log("\n## Drafts");
+    const draftOnly = draftIDs.filter((id) => !specIDs.includes(id));
+    if (draftOnly.length === 0)
+        console.log("- none");
+    for (const id of draftOnly)
+        console.log(`- ${id}: draft (not an executable spec yet)`);
+    const lock = await readLock(input.project);
+    console.log("\n## Lock");
+    if (lock === undefined) {
+        console.log("- none");
+    }
+    else {
+        const alive = pidAlive(lock.pid);
+        console.log(`- run ${lock.runID} session ${lock.sessionID} pid ${lock.pid} (${alive ? "process alive" : "process gone"}) since ${new Date(lock.acquiredAt).toISOString()}`);
+        if (!alive)
+            console.log("  warning: stale lock; /ulw-execute --resume or --recover can reclaim it");
+    }
+    const count = async (directory) => {
+        try {
+            return (await readdir(directory)).length;
+        }
+        catch {
+            return 0;
+        }
+    };
+    console.log("\n## Artifacts");
+    console.log(`- reports: ${await count(join(root, "reports"))}`);
+    console.log(`- evidence runs: ${await count(join(root, "evidence"))}`);
+    const entries = await readDiagnostics(input.project, input.limit);
+    console.log("\n## Recent diagnostics");
+    if (entries.length === 0)
+        console.log("- none");
+    for (const line of formatDiagnostics(entries, input.limit))
+        console.log(line);
+    if (specErrors > 0) {
+        console.error(`\n${specErrors} spec error(s); invalid specs cannot be published or executed`);
+        process.exitCode = 1;
+    }
+    else {
+        console.log("\nok");
+    }
+}
 async function uninstall(input) {
     const scope = scopeFor(input.global, input.project);
     const manifestText = await readOptional(scope.manifestPath);
@@ -250,12 +336,13 @@ async function uninstall(input) {
     console.log("uninstalled; ulw specs, runs, evidence and reports were preserved");
 }
 function usage() {
-    console.error(`usage: oc2-ulw-plan <init|doctor|uninstall> [options]
+    console.error(`usage: oc2-ulw-plan <init|doctor|diagnose|uninstall> [options]
 
 options:
   --global            use ~/.config/opencode instead of the project
   --project <dir>     project directory (default: cwd)
   --plugin <name>     plugin entry (default: ${DEFAULT_PLUGIN})
+  --limit <n>         number of diagnostics shown by diagnose (default: 20)
 `);
     process.exit(2);
 }
@@ -264,6 +351,7 @@ async function main(argv) {
     let global = false;
     let project = process.cwd();
     let plugin;
+    let limit = 20;
     for (let index = 1; index < argv.length; index += 1) {
         const arg = argv[index];
         if (arg === undefined)
@@ -278,6 +366,14 @@ async function main(argv) {
         }
         else if (arg.startsWith("--project="))
             project = resolve(arg.slice("--project=".length));
+        else if (arg === "--limit") {
+            const value = argv[++index];
+            if (value === undefined)
+                usage();
+            limit = Number(value);
+        }
+        else if (arg.startsWith("--limit="))
+            limit = Number(arg.slice("--limit=".length));
         else if (arg === "--plugin") {
             const value = argv[++index];
             if (value === undefined)
@@ -289,10 +385,14 @@ async function main(argv) {
         else
             usage();
     }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500)
+        usage();
     if (command === "init")
         await init({ global, project, plugin: plugin ?? DEFAULT_PLUGIN });
     else if (command === "doctor")
         await doctor({ global, project, ...(plugin === undefined ? {} : { plugin }) });
+    else if (command === "diagnose")
+        await diagnose({ project, limit });
     else if (command === "uninstall")
         await uninstall({ global, project });
     else

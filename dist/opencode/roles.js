@@ -1,6 +1,8 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { UlwError } from "../core/errors.js";
 import { assertBudget, policyFor, roleInvocations } from "../core/roles.js";
-import { parseSpec } from "../core/spec.js";
+import { parseSpec, sha256 } from "../core/spec.js";
 import { recordPlanReview, loadSpecRecord, saveSpecRecord } from "../core/spec-record.js";
 import { loadRun, saveRun } from "../core/run.js";
 import { validateRoleReport } from "../core/reports.js";
@@ -45,6 +47,8 @@ export class RoleService {
         const store = this.runtime.store(workspace);
         const prepared = await this.prepareTarget(input, workspace, parent, policy.profile);
         const effectiveSpecId = input.specId ?? prepared.specId;
+        const researchRole = input.role === "explorer" || input.role === "librarian" || input.role === "consultant";
+        const budgetKey = effectiveSpecId ?? (researchRole && input.assignment !== undefined && input.assignment.trim() !== "" ? `assignment:${sha256(input.assignment).slice(0, 16)}` : undefined);
         const invocations = await store.listInvocations();
         const budgetTarget = input.role === "worker"
             ? {
@@ -53,7 +57,7 @@ export class RoleService {
             }
             : input.role === "verifier" || input.role === "code-reviewer"
                 ? { ...(input.runId === undefined ? {} : { runId: input.runId }) }
-                : { ...(effectiveSpecId === undefined ? {} : { specId: effectiveSpecId }) };
+                : { ...(budgetKey === undefined ? {} : { specId: budgetKey }) };
         assertBudget(invocations, input.role, budgetTarget);
         const invocationID = uid("role");
         const invocation = {
@@ -65,6 +69,7 @@ export class RoleService {
             childSessionID: "",
             agent: policy.profile,
             ...(effectiveSpecId === undefined ? {} : { specId: effectiveSpecId }),
+            ...(budgetKey === undefined ? {} : { budgetKey }),
             ...(input.runId === undefined ? {} : { runId: input.runId }),
             ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
             ...(prepared.targetHash === undefined ? {} : { targetHash: prepared.targetHash }),
@@ -137,14 +142,21 @@ export class RoleService {
     }
     async prepareTarget(input, workspace, parent, profile) {
         if (input.role === "explorer" || input.role === "librarian" || input.role === "consultant") {
-            if (input.specId === undefined)
-                throw new UlwError("ROLE_TARGET", `${input.role} requires specId`);
-            const spec = await this.loadSpec(input.specId, workspace);
+            if (input.specId === undefined) {
+                if (input.assignment === undefined || input.assignment.trim() === "") {
+                    throw new UlwError("ROLE_TARGET", `${input.role} requires specId or assignment`);
+                }
+                return {
+                    title: `${input.role}: ${input.assignment.split("\n")[0]?.slice(0, 80) ?? "research"}`,
+                    promptExtra: `Workspace: ${workspace}\n\nAdditional assignment:\n${input.assignment}`,
+                };
+            }
+            const target = await this.loadResearchTarget(input.specId, workspace);
             return {
                 title: `${input.specId} research`,
                 specId: input.specId,
-                targetHash: spec.hash,
-                promptExtra: `Spec: ${spec.path}\nSpec sha256: ${spec.hash}\n\nAdditional assignment:\n${input.assignment ?? "(none)"}`,
+                targetHash: target.hash,
+                promptExtra: `Target (${target.kind}): ${target.path}\nTarget sha256: ${target.hash}\n\nAdditional assignment:\n${input.assignment ?? "(none)"}`,
             };
         }
         if (input.role === "practical-reviewer" || input.role === "adversarial-reviewer") {
@@ -222,6 +234,25 @@ export class RoleService {
             throw new UlwError("SPEC_ID", "spec file id does not match its path");
         return { parsed, path: file.path, hash: parsed.sha256 };
     }
+    /**
+     * Explorers, librarians and consultants may run before the executable spec
+     * exists. A draft is a valid research target and is not parsed as a spec.
+     */
+    async loadResearchTarget(specId, workspace) {
+        const spec = await this.runtime.loadSpec(specId, workspace);
+        if (spec !== undefined)
+            return { kind: "spec", path: spec.path, content: spec.content, hash: sha256(spec.content) };
+        const draftPath = join(workspace, ".opencode", "ulw", "drafts", `${specId}.md`);
+        try {
+            const content = await readFile(draftPath, "utf8");
+            return { kind: "draft", path: draftPath, content, hash: sha256(content) };
+        }
+        catch (error) {
+            if (error.code !== "ENOENT")
+                throw error;
+            throw new UlwError("SPEC_NOT_FOUND", `no spec or draft file: ${specId}; call ulw_spec action=begin first`);
+        }
+    }
     async loadRunTarget(runId, taskId, workspace) {
         const store = this.runtime.store(workspace);
         const run = await loadRun(store, runId);
@@ -287,8 +318,7 @@ export class RoleService {
             }
         }
         if (outcome === "timeout" || outcome === "cancelled") {
-            if (outcome === "timeout")
-                await interruptSession(this.ctx(), before.childSessionID);
+            await interruptSession(this.ctx(), before.childSessionID);
             before.status = outcome === "timeout" ? "timed_out" : "cancelled";
             before.error = outcome;
             before.updatedAt = Date.now();
@@ -376,7 +406,8 @@ export class RoleService {
             if (invocation.childSessionID !== sessionID)
                 throw new UlwError("REPORT_IDENTITY", "reporting session does not match the invocation");
             let spec;
-            if (binding.specId !== undefined) {
+            const researchRole = binding.role === "explorer" || binding.role === "librarian" || binding.role === "consultant";
+            if (!researchRole && binding.specId !== undefined) {
                 const file = await this.runtime.loadSpec(binding.specId, workspace);
                 if (file === undefined)
                     throw new UlwError("SPEC_NOT_FOUND", `no spec file: ${binding.specId}`);

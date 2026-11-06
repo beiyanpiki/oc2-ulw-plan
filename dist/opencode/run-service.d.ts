@@ -16,7 +16,7 @@ export declare class RunService {
     workspaceForSessionRun(sessionID: string, runID: string): Promise<string>;
     start(input: StartRunInput): Promise<RunRecord>;
     private markReviewInvocations;
-    resume(runID: string, sessionID: string, workspaceOverride?: string): Promise<RunRecord>;
+    resume(runID: string, sessionID: string, workspaceOverride?: string, takeover?: boolean): Promise<RunRecord>;
     status(runID: string, sessionID: string): Promise<{
         run: RunRecord;
         text: string;

@@ -39,7 +39,7 @@ export async function registerSessionContext(ctx, runtime) {
         if (agent === "ulw-plan") {
             event.system.push({
                 type: "text",
-                text: "<ulw-plan>Planning mode is active. Explore and write only through ulw_spec. Product edits, shell and implementation are disabled. Advisory/manual approval is never a review; publish only after ulw_role reports.</ulw-plan>",
+                text: "<ulw-plan>Planning mode is active. Explore and write only through ulw_spec. Product edits, shell and implementation are disabled. Call ulw_spec action=template for the exact schema; action=write saves invalid content and returns every diagnostic, so repair with action=patch instead of regenerating. Advisory/manual approval is never a review; publish only after ulw_role reports.</ulw-plan>",
             });
             return;
         }

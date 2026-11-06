@@ -118,12 +118,24 @@ export class RunService {
         }
         await saveRun(store, run);
     }
-    async resume(runID, sessionID, workspaceOverride) {
+    async resume(runID, sessionID, workspaceOverride, takeover = false) {
         const { workspace: sessionWorkspace } = await this.runtime.workspaceOfSession(sessionID);
         const workspace = workspaceOverride ?? (await this.resolveWorkspace(sessionID, runID));
         const store = this.runtime.store(workspace);
         const run = await loadRun(store, runID);
-        requireOwner(run, sessionID);
+        const previousOwner = run.ownerSessionID;
+        if (previousOwner !== sessionID) {
+            if (!takeover) {
+                throw new UlwError("RUN_OWNER", `run ${run.id} belongs to another session; pass --takeover to recover it`);
+            }
+            const owner = await this.runtime.session(previousOwner).catch(() => undefined);
+            const busy = owner?.time?.busy !== undefined && (owner.time.idle === undefined || owner.time.busy > owner.time.idle);
+            if (owner !== undefined && busy) {
+                throw new UlwError("RUN_OWNER_BUSY", `run ${run.id} is still owned by an active session: ${previousOwner}`);
+            }
+            run.ownerSessionID = sessionID;
+            run.ownerAgent = "ulw-exec";
+        }
         if (run.status === "succeeded")
             throw new UlwError("RUN_DONE", "run already succeeded");
         if (run.status === "stale")
@@ -136,7 +148,7 @@ export class RunService {
             await setRunStatus(store, run, "stale", "spec changed while the run was paused");
             throw new UlwError("SPEC_STALE", "spec changed while the run was paused");
         }
-        const decision = await inspectRecoverable(workspace, sessionID, runID);
+        const decision = await inspectRecoverable(workspace, previousOwner, runID);
         if (!decision.recoverable)
             throw new UlwError("RUN_LOCKED", decision.reason);
         let token = "";
@@ -149,31 +161,40 @@ export class RunService {
             token = transferred.token;
         }
         run.lockToken = token;
-        run.status = "running";
-        delete run.pauseReason;
-        const nowFingerprint = await fingerprintWorkspace(workspace, run.baselineFiles, run.baselineCommit);
-        for (const task of Object.values(run.tasks)) {
-            if ((task.status === "checked" || task.status === "passed") && task.fingerprint !== nowFingerprint.fingerprint) {
-                task.status = "pending";
-                delete task.fingerprint;
-                delete task.checkedAt;
+        try {
+            run.status = "running";
+            delete run.pauseReason;
+            const nowFingerprint = await fingerprintWorkspace(workspace, run.baselineFiles, run.baselineCommit);
+            for (const task of Object.values(run.tasks)) {
+                if ((task.status === "checked" || task.status === "passed") && task.fingerprint !== nowFingerprint.fingerprint) {
+                    task.status = "pending";
+                    delete task.fingerprint;
+                    delete task.checkedAt;
+                }
             }
+            await saveRun(store, run);
+            await this.runtime.store(sessionWorkspace).setActive(sessionID, {
+                schema: "ulw-active-run/v1",
+                sessionID,
+                runID: run.id,
+                workspace,
+                specId: run.specId,
+                updatedAt: Date.now(),
+            });
+            return run;
         }
-        await saveRun(store, run);
-        await this.runtime.store(sessionWorkspace).setActive(sessionID, {
-            schema: "ulw-active-run/v1",
-            sessionID,
-            runID: run.id,
-            workspace,
-            specId: run.specId,
-            updatedAt: Date.now(),
-        });
-        return run;
+        catch (error) {
+            await releaseLock(workspace, token);
+            throw error;
+        }
     }
     async status(runID, sessionID) {
         const workspace = await this.resolveWorkspace(sessionID, runID);
         const store = this.runtime.store(workspace);
         const run = await loadRun(store, runID);
+        const owner = await this.runtime.session(run.ownerSessionID).catch(() => undefined);
+        const ownerBusy = owner?.time?.busy !== undefined && (owner.time.idle === undefined || owner.time.busy > owner.time.idle);
+        const ownerState = owner === undefined ? "missing" : owner.outcome ?? (ownerBusy ? "busy" : "idle");
         const evidence = await store.listEvidence(runID);
         const invocations = await store.listInvocations();
         const final = invocations.map((entry) => entry.value).filter((entry) => entry.runId === runID);
@@ -181,6 +202,7 @@ export class RunService {
             `# ulw run ${run.id}`,
             `spec: ${run.specId} (${run.specHash.slice(0, 12)})`,
             `status: ${run.status}`,
+            `owner: ${run.ownerSessionID} (${ownerState})`,
             `workspace: ${workspace}`,
             `attempts: ${Object.values(run.tasks).reduce((sum, task) => sum + task.attempts, 0)}`,
             "",
@@ -196,7 +218,10 @@ export class RunService {
             ...(final.length === 0 ? ["- none"] : final.map((entry) => `- ${entry.role}: ${entry.status}${entry.targetHash ? ` @ ${entry.targetHash.slice(0, 8)}` : ""}`)),
             "",
             "## Next",
-            run.status === "paused" ? `- resume: /ulw-execute ${run.specId} --resume ${run.id}` : run.status === "final_verification" ? "- run ulw_role verifier and code-reviewer, then ulw_run action=finalize" : run.status === "blocked" ? `- inspect ${run.failureReason ?? "the blocked task"} or reopen a task` : "- continue ready tasks with ulw_run action=claim and ulw_check",
+            ...((run.status === "running" || run.status === "final_verification") && (ownerState === "idle" || ownerState === "interrupted" || ownerState === "missing")
+                ? [`- WARNING: owner session is ${ownerState}; the run may be orphaned. Recover it with /ulw-execute --recover ${run.specId} --takeover`]
+                : []),
+            run.status === "paused" ? `- resume: /ulw-execute --resume ${run.id}` : run.status === "final_verification" ? "- run ulw_role verifier and code-reviewer, then ulw_run action=finalize" : run.status === "blocked" ? `- inspect ${run.failureReason ?? "the blocked task"} or reopen a task` : run.status === "running" ? "- continue ready tasks with ulw_run action=claim and ulw_check" : "- create a new run when the code is ready",
         ];
         return { run, text: lines.join("\n") };
     }

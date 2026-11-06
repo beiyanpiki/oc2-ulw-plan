@@ -1,7 +1,12 @@
 import type { ParsedSpec, SpecRecord, SpecReviewStatus } from "./types.js";
 import { WorkspaceStore } from "./store.js";
 import type { ReportRecord } from "./types.js";
-export declare function createSpecRecord(parsed: ParsedSpec, workspace: string, sourceHashes: Record<string, string>, requireAdversarial: boolean): SpecRecord;
+export declare function createSpecRecord(parsed: ParsedSpec, workspace: string, sourceHashes: Record<string, string>, requireAdversarial: boolean, strict?: boolean): SpecRecord;
+/**
+ * A record for content that was written but is not yet structurally valid.
+ * It keeps the artifact discoverable without ever looking publishable.
+ */
+export declare function createPendingSpecRecord(id: string, workspace: string, contentHash: string, strict: boolean): SpecRecord;
 export declare function loadSpecRecord(store: WorkspaceStore, id: string): Promise<SpecRecord>;
 export declare function saveSpecRecord(store: WorkspaceStore, record: SpecRecord): Promise<void>;
 export declare function reviewRequired(record: SpecRecord): boolean;

@@ -36,7 +36,8 @@ export function roleInvocations(
     .map((entry) => entry.value)
     .filter((invocation) => {
       if (invocation.role !== role) return false;
-      if (target.specId !== undefined && invocation.specId !== target.specId) return false;
+      const key = invocation.budgetKey ?? invocation.specId;
+      if (target.specId !== undefined && key !== target.specId) return false;
       if (target.runId !== undefined && invocation.runId !== target.runId) return false;
       if (target.taskId !== undefined && invocation.taskId !== target.taskId) return false;
       if (target.targetHash !== undefined && invocation.targetHash !== target.targetHash) return false;

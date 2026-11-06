@@ -1,9 +1,30 @@
+import { SPEC_SCHEMA_GUIDE, specTemplate } from "../core/guide.js";
 import { UlwError } from "../core/errors.js";
+import { recordSpecDiagnostics } from "../io/diagnostics.js";
 import { SpecService } from "./spec-service.js";
 import { RunService } from "./run-service.js";
 import { RoleService } from "./roles.js";
+import { DiagnoseService } from "./diagnose-service.js";
 function textResult(content, metadata) {
     return metadata === undefined ? { content } : { content, metadata };
+}
+function validationText(result) {
+    const errors = result.diagnostics.filter((entry) => entry.severity === "error");
+    const warnings = result.diagnostics.filter((entry) => entry.severity === "warning");
+    const shown = [...errors.slice(0, 24), ...warnings.slice(0, 8)];
+    return JSON.stringify({
+        valid: result.valid,
+        hash: result.hash,
+        path: result.path,
+        errorCount: errors.length,
+        diagnostics: shown,
+        truncated: errors.length + warnings.length > shown.length,
+        ...(result.valid
+            ? { next: "validate is clean; request an independent plan review with ulw_role, then publish" }
+            : {
+                next: "the file is saved as a draft; fix the reported lines with ulw_spec action=patch (edits: [{old,new}]) and call validate again. Check ids are V1, V2, ...; task keys are id, title, requirements, dependsOn, files, checks",
+            }),
+    }, null, 2);
 }
 function stringInput(input, key, required = true) {
     const value = input[key];
@@ -31,16 +52,30 @@ export async function registerTools(ctx, runtime) {
     const specs = new SpecService(runtime);
     const runs = new RunService(runtime);
     const roles = new RoleService(runtime);
+    const diagnose = new DiagnoseService(runtime);
     await ctx.tool.transform((editor) => {
         editor.add({
             name: "ulw_spec",
-            description: "Create, read, validate, review and publish an oc2-ulw executable spec.",
+            description: "Create, read, validate, review and publish an oc2-ulw executable spec. Start with action=template when unsure about the YAML shape.",
             input: {
                 type: "object",
                 properties: {
-                    action: { type: "string", enum: ["begin", "write", "read", "validate", "publish", "reopen", "list", "status"] },
+                    action: { type: "string", enum: ["begin", "write", "patch", "read", "validate", "publish", "reopen", "list", "status", "template"] },
                     id: { type: "string" },
                     content: { type: "string" },
+                    edits: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: {
+                                old: { type: "string" },
+                                new: { type: "string" },
+                                replaceAll: { type: "boolean" },
+                            },
+                            required: ["old", "new"],
+                            additionalProperties: false,
+                        },
+                    },
                     kind: { type: "string", enum: ["spec", "draft"] },
                     offset: { type: "number" },
                     limit: { type: "number" },
@@ -64,6 +99,10 @@ export async function registerTools(ctx, runtime) {
                 if (activeRun?.status === "running" || activeRun?.status === "final_verification") {
                     throw new UlwError("RUN_ACTIVE", "the spec is frozen while an execution run is active");
                 }
+                if (action === "template") {
+                    const id = stringInput(input, "id", false);
+                    return textResult([SPEC_SCHEMA_GUIDE, "", "Filled template:", "", "```markdown", specTemplate(id), "```"].join("\n"), { id: id ?? "example-spec" });
+                }
                 if (action === "begin") {
                     const result = await specs.begin({
                         id: stringInput(input, "id"),
@@ -71,7 +110,12 @@ export async function registerTools(ctx, runtime) {
                         ...(stringInput(input, "intent", false) === undefined ? {} : { intent: stringInput(input, "intent", false) }),
                         strict: boolInput(input, "strict"),
                     }, tool.sessionID);
-                    return textResult(`spec draft ready: ${result.draftPath}\nstatus: ${result.status}`, { ...result });
+                    return textResult(`spec draft ready: ${result.draftPath}\nstatus: ${result.status}\n\n${result.template}`, {
+                        id: result.id,
+                        draftPath: result.draftPath,
+                        specPath: result.specPath,
+                        status: result.status,
+                    });
                 }
                 if (action === "write") {
                     const result = await specs.write({
@@ -80,7 +124,50 @@ export async function registerTools(ctx, runtime) {
                         strict: boolInput(input, "strict"),
                         ...(stringInput(input, "expectedHash", false) === undefined ? {} : { expectedHash: stringInput(input, "expectedHash", false) }),
                     }, tool.sessionID);
-                    return textResult(JSON.stringify(result, null, 2), { ...result });
+                    if (!result.valid) {
+                        await recordSpecDiagnostics(workspace, {
+                            sessionID: tool.sessionID,
+                            agent: tool.agent,
+                            action: "write",
+                            diagnostics: result.diagnostics,
+                        }).catch(() => undefined);
+                    }
+                    return textResult(validationText(result), { valid: result.valid, hash: result.hash, path: result.path });
+                }
+                if (action === "patch") {
+                    const rawEdits = input.edits;
+                    if (!Array.isArray(rawEdits))
+                        throw new UlwError("INPUT_REQUIRED", "edits is required for action=patch");
+                    const edits = rawEdits.map((entry, index) => {
+                        if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+                            throw new UlwError("INPUT_TYPE", `edits[${index}] must be an object`);
+                        }
+                        const edit = entry;
+                        if (typeof edit.old !== "string" || edit.old === "")
+                            throw new UlwError("INPUT_TYPE", `edits[${index}].old must be a non-empty string`);
+                        if (typeof edit.new !== "string")
+                            throw new UlwError("INPUT_TYPE", `edits[${index}].new must be a string`);
+                        return {
+                            old: edit.old,
+                            new: edit.new,
+                            ...(edit.replaceAll === true ? { replaceAll: true } : {}),
+                        };
+                    });
+                    const result = await specs.patch({
+                        id: stringInput(input, "id"),
+                        edits,
+                        strict: boolInput(input, "strict"),
+                        ...(stringInput(input, "expectedHash", false) === undefined ? {} : { expectedHash: stringInput(input, "expectedHash", false) }),
+                    }, tool.sessionID);
+                    if (!result.valid) {
+                        await recordSpecDiagnostics(workspace, {
+                            sessionID: tool.sessionID,
+                            agent: tool.agent,
+                            action: "patch",
+                            diagnostics: result.diagnostics,
+                        }).catch(() => undefined);
+                    }
+                    return textResult(validationText(result), { valid: result.valid, hash: result.hash, path: result.path });
                 }
                 if (action === "read") {
                     const result = await specs.read(stringInput(input, "id"), tool.sessionID, stringInput(input, "kind", false) === "draft" ? "draft" : "spec", numberInput(input, "offset", 0), numberInput(input, "limit", 8192));
@@ -88,7 +175,15 @@ export async function registerTools(ctx, runtime) {
                 }
                 if (action === "validate") {
                     const result = await specs.validate(stringInput(input, "id"), tool.sessionID);
-                    return textResult(JSON.stringify(result, null, 2), { ...result });
+                    if (!result.valid) {
+                        await recordSpecDiagnostics(workspace, {
+                            sessionID: tool.sessionID,
+                            agent: tool.agent,
+                            action: "validate",
+                            diagnostics: result.diagnostics,
+                        }).catch(() => undefined);
+                    }
+                    return textResult(validationText(result), { valid: result.valid, hash: result.hash, path: result.path });
                 }
                 if (action === "publish") {
                     const result = await specs.publish(stringInput(input, "id"), tool.sessionID);
@@ -200,7 +295,7 @@ export async function registerTools(ctx, runtime) {
         });
         editor.add({
             name: "ulw_role",
-            description: "Start or wait for an independent ulw research, review, verification, implementation or code-review role.",
+            description: "Start or wait for an independent ulw role. explorer/librarian/consultant accept a draft id or only an assignment; reviewers need a spec; workers and final roles need a run. background=true returns immediately: call action=wait with the invocation id before using the result.",
             input: {
                 type: "object",
                 properties: {
@@ -277,6 +372,23 @@ export async function registerTools(ctx, runtime) {
                     role: report.role,
                     targetHash: report.targetHash,
                 });
+            },
+        });
+        editor.add({
+            name: "ulw_diagnose",
+            description: "Read-only Host snapshot of specs, runs, role invocations, the workspace lock and recent failures. Use it to monitor a long ulw flow or to explain a stuck run.",
+            input: {
+                type: "object",
+                properties: {
+                    limit: { type: "number" },
+                },
+                additionalProperties: false,
+            },
+            async execute(raw, tool) {
+                const input = raw;
+                const limit = Math.max(1, Math.min(200, Math.floor(numberInput(input, "limit", 20))));
+                const result = await diagnose.report(tool.sessionID, limit);
+                return textResult(result.text, result.metadata);
             },
         });
     });

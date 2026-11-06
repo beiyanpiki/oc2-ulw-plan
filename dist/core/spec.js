@@ -62,12 +62,6 @@ export function parseFrontmatter(content) {
         throw new UlwError("SPEC_BODY", "spec body must explain the design and decisions");
     return { yaml: match[1] ?? "", body };
 }
-function expectRecord(value, label) {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        throw new UlwError("SPEC_SHAPE", `${label} must be a mapping`);
-    }
-    return value;
-}
 function expectArray(value, label) {
     if (!Array.isArray(value))
         throw new UlwError("SPEC_SHAPE", `${label} must be an array`);
@@ -84,159 +78,403 @@ function expectString(value, label, nonEmpty = true) {
 function expectStringArray(value, label) {
     return expectArray(value, label).map((entry, index) => expectString(entry, `${label}[${index}]`));
 }
-function expectKeys(value, allowed, label) {
+function isRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function report(diagnostics, code, message, entity) {
+    diagnostics.push(entity === undefined ? { severity: "error", code, message } : { severity: "error", code, message, entity });
+}
+function capture(diagnostics, error, entity) {
+    if (error instanceof UlwError)
+        report(diagnostics, error.code, error.message, entity);
+    else
+        report(diagnostics, "SPEC_INVALID", error instanceof Error ? error.message : String(error), entity);
+}
+function rejectUnknownKeys(value, allowed, label, diagnostics) {
     for (const key of Object.keys(value)) {
-        if (!allowed.has(key))
-            throw new UlwError("SPEC_UNKNOWN_KEY", `${label}: unknown key ${JSON.stringify(key)}`);
+        if (!allowed.has(key)) {
+            report(diagnostics, "SPEC_UNKNOWN_KEY", `${label}: unknown key ${JSON.stringify(key)} (allowed: ${[...allowed].join(", ")})`);
+        }
     }
 }
-function parseSources(value) {
-    return expectArray(value, "sources").map((entry, index) => {
-        const source = expectRecord(entry, `sources[${index}]`);
-        expectKeys(source, SOURCE_KEYS, `sources[${index}]`);
-        const path = assertSafeRelativePath(expectString(source.path, `sources[${index}].path`), `sources[${index}].path`);
-        const sha = source.sha256 === undefined ? undefined : expectString(source.sha256, `sources[${index}].sha256`);
-        if (sha !== undefined && !/^[a-f0-9]{64}$/.test(sha)) {
-            throw new UlwError("SPEC_SOURCE_HASH", `sources[${index}].sha256 must be a lowercase sha256`);
+function readArray(value, label, diagnostics) {
+    try {
+        return expectArray(value, label);
+    }
+    catch (error) {
+        capture(diagnostics, error);
+        return undefined;
+    }
+}
+function readString(value, label, diagnostics) {
+    try {
+        return expectString(value, label);
+    }
+    catch (error) {
+        capture(diagnostics, error);
+        return undefined;
+    }
+}
+function readStringArray(value, label, diagnostics) {
+    try {
+        return expectStringArray(value, label);
+    }
+    catch (error) {
+        capture(diagnostics, error);
+        return undefined;
+    }
+}
+function readSources(value, diagnostics) {
+    const entries = readArray(value, "sources", diagnostics);
+    if (entries === undefined)
+        return undefined;
+    let ok = true;
+    const out = [];
+    for (const [index, entry] of entries.entries()) {
+        const label = `sources[${index}]`;
+        if (!isRecord(entry)) {
+            report(diagnostics, "SPEC_SHAPE", `${label} must be a mapping`, label);
+            ok = false;
+            continue;
         }
-        return sha === undefined ? { path } : { path, sha256: sha };
-    });
+        rejectUnknownKeys(entry, SOURCE_KEYS, label, diagnostics);
+        const rawPath = readString(entry.path, `${label}.path`, diagnostics);
+        let path;
+        if (rawPath !== undefined) {
+            try {
+                path = assertSafeRelativePath(rawPath, `${label}.path`);
+            }
+            catch (error) {
+                capture(diagnostics, error, label);
+            }
+        }
+        let sha;
+        if (entry.sha256 !== undefined) {
+            const raw = readString(entry.sha256, `${label}.sha256`, diagnostics);
+            if (raw !== undefined) {
+                if (!/^[a-f0-9]{64}$/.test(raw)) {
+                    report(diagnostics, "SPEC_SOURCE_HASH", `${label}.sha256 must be a lowercase sha256`, label);
+                    ok = false;
+                }
+                else {
+                    sha = raw;
+                }
+            }
+        }
+        if (path === undefined) {
+            ok = false;
+            continue;
+        }
+        out.push(sha === undefined ? { path } : { path, sha256: sha });
+    }
+    return ok ? out : undefined;
 }
-function parseRequirements(value) {
-    return expectArray(value, "requirements").map((entry, index) => {
-        const requirement = expectRecord(entry, `requirements[${index}]`);
-        expectKeys(requirement, REQUIREMENT_KEYS, `requirements[${index}]`);
-        const id = expectString(requirement.id, `requirements[${index}].id`);
-        if (!/^R[1-9]\d*$/.test(id))
-            throw new UlwError("SPEC_ID", `requirement id must look like R1: ${id}`);
-        return { id, text: expectString(requirement.text, `requirements[${index}].text`) };
-    });
+function readRequirements(value, diagnostics) {
+    const entries = readArray(value, "requirements", diagnostics);
+    if (entries === undefined)
+        return undefined;
+    let ok = true;
+    const out = [];
+    for (const [index, entry] of entries.entries()) {
+        const label = `requirements[${index}]`;
+        if (!isRecord(entry)) {
+            report(diagnostics, "SPEC_SHAPE", `${label} must be a mapping`, label);
+            ok = false;
+            continue;
+        }
+        rejectUnknownKeys(entry, REQUIREMENT_KEYS, label, diagnostics);
+        const id = readString(entry.id, `${label}.id`, diagnostics);
+        const text = readString(entry.text, `${label}.text`, diagnostics);
+        if (id !== undefined && !/^R[1-9]\d*$/.test(id)) {
+            report(diagnostics, "SPEC_ID", `${label}.id must match R<number> (for example R1): ${id}`, label);
+            ok = false;
+        }
+        if (id === undefined || text === undefined) {
+            ok = false;
+            continue;
+        }
+        out.push({ id, text });
+    }
+    return ok ? out : undefined;
 }
-function parseTasks(value) {
-    return expectArray(value, "tasks").map((entry, index) => {
-        const task = expectRecord(entry, `tasks[${index}]`);
-        expectKeys(task, TASK_KEYS, `tasks[${index}]`);
-        const id = expectString(task.id, `tasks[${index}].id`);
-        if (!/^T[1-9]\d*$/.test(id))
-            throw new UlwError("SPEC_ID", `task id must look like T1: ${id}`);
-        const files = expectStringArray(task.files, `tasks[${index}].files`).map((path, fileIndex) => assertSafeRelativePath(path, `tasks[${index}].files[${fileIndex}]`));
-        const requirements = expectStringArray(task.requirements, `tasks[${index}].requirements`);
-        const dependsOn = task.dependsOn === undefined ? [] : expectStringArray(task.dependsOn, `tasks[${index}].dependsOn`);
-        const checks = expectStringArray(task.checks, `tasks[${index}].checks`);
-        return {
-            id,
-            title: expectString(task.title, `tasks[${index}].title`),
-            requirements,
-            dependsOn,
-            files,
-            checks,
-        };
-    });
+function readTasks(value, diagnostics) {
+    const entries = readArray(value, "tasks", diagnostics);
+    if (entries === undefined)
+        return undefined;
+    let ok = true;
+    const out = [];
+    for (const [index, entry] of entries.entries()) {
+        const label = `tasks[${index}]`;
+        if (!isRecord(entry)) {
+            report(diagnostics, "SPEC_SHAPE", `${label} must be a mapping`, label);
+            ok = false;
+            continue;
+        }
+        rejectUnknownKeys(entry, TASK_KEYS, label, diagnostics);
+        if (entry.acceptance !== undefined) {
+            report(diagnostics, "SPEC_UNKNOWN_KEY", `${label}.acceptance is not a task field; put acceptance criteria in the task title or the Markdown body`, label);
+        }
+        const id = readString(entry.id, `${label}.id`, diagnostics);
+        if (id !== undefined && !/^T[1-9]\d*$/.test(id)) {
+            report(diagnostics, "SPEC_ID", `${label}.id must match T<number> (for example T1): ${id}`, label);
+            ok = false;
+        }
+        const title = readString(entry.title, `${label}.title`, diagnostics);
+        const rawFiles = readStringArray(entry.files, `${label}.files`, diagnostics);
+        let files;
+        if (rawFiles !== undefined) {
+            files = [];
+            for (const [fileIndex, path] of rawFiles.entries()) {
+                try {
+                    files.push(assertSafeRelativePath(path, `${label}.files[${fileIndex}]`));
+                }
+                catch (error) {
+                    capture(diagnostics, error, label);
+                    files = undefined;
+                    break;
+                }
+            }
+        }
+        const requirements = readStringArray(entry.requirements, `${label}.requirements`, diagnostics);
+        const dependsOn = entry.dependsOn === undefined ? [] : readStringArray(entry.dependsOn, `${label}.dependsOn`, diagnostics);
+        const checks = readStringArray(entry.checks, `${label}.checks`, diagnostics);
+        if (id === undefined || title === undefined || files === undefined || requirements === undefined || dependsOn === undefined || checks === undefined) {
+            ok = false;
+            continue;
+        }
+        out.push({ id, title, requirements, dependsOn, files, checks });
+    }
+    return ok ? out : undefined;
 }
-function parseExpectation(value, label) {
+function readExpectation(value, label, diagnostics) {
     if (value === undefined)
         return { exitCode: 0, stdoutIncludes: [], stderrIncludes: [] };
-    const expect = expectRecord(value, label);
-    expectKeys(expect, EXPECT_KEYS, label);
-    const exitCode = expect.exitCode === undefined ? 0 : Number(expect.exitCode);
-    if (!Number.isInteger(exitCode) || exitCode < 0 || exitCode > 255) {
-        throw new UlwError("SPEC_CHECK", `${label}.exitCode must be an integer between 0 and 255`);
+    if (!isRecord(value)) {
+        report(diagnostics, "SPEC_SHAPE", `${label} must be a mapping`, label);
+        return undefined;
     }
-    return {
-        exitCode,
-        stdoutIncludes: expect.stdoutIncludes === undefined ? [] : expectStringArray(expect.stdoutIncludes, `${label}.stdoutIncludes`),
-        stderrIncludes: expect.stderrIncludes === undefined ? [] : expectStringArray(expect.stderrIncludes, `${label}.stderrIncludes`),
-    };
+    rejectUnknownKeys(value, EXPECT_KEYS, label, diagnostics);
+    const rawExitCode = value.exitCode === undefined ? 0 : Number(value.exitCode);
+    if (!Number.isInteger(rawExitCode) || rawExitCode < 0 || rawExitCode > 255) {
+        report(diagnostics, "SPEC_CHECK", `${label}.exitCode must be an integer between 0 and 255`, label);
+        return undefined;
+    }
+    const stdoutIncludes = value.stdoutIncludes === undefined ? [] : readStringArray(value.stdoutIncludes, `${label}.stdoutIncludes`, diagnostics);
+    const stderrIncludes = value.stderrIncludes === undefined ? [] : readStringArray(value.stderrIncludes, `${label}.stderrIncludes`, diagnostics);
+    if (stdoutIncludes === undefined || stderrIncludes === undefined)
+        return undefined;
+    return { exitCode: rawExitCode, stdoutIncludes, stderrIncludes };
 }
-function parseChecks(value) {
-    return expectArray(value, "checks").map((entry, index) => {
-        const check = expectRecord(entry, `checks[${index}]`);
-        const id = expectString(check.id, `checks[${index}].id`);
-        if (!/^V[1-9]\d*$/.test(id))
-            throw new UlwError("SPEC_ID", `check id must look like V1: ${id}`);
-        const type = expectString(check.type, `checks[${index}].type`);
+function readChecks(value, diagnostics) {
+    const entries = readArray(value, "checks", diagnostics);
+    if (entries === undefined)
+        return undefined;
+    let ok = true;
+    const out = [];
+    for (const [index, entry] of entries.entries()) {
+        const label = `checks[${index}]`;
+        if (!isRecord(entry)) {
+            report(diagnostics, "SPEC_SHAPE", `${label} must be a mapping`, label);
+            ok = false;
+            continue;
+        }
+        const id = readString(entry.id, `${label}.id`, diagnostics);
+        if (id !== undefined && !/^V[1-9]\d*$/.test(id)) {
+            report(diagnostics, "SPEC_ID", `${label}.id must match V<number> (for example V1): ${id}`, label);
+            ok = false;
+        }
+        const type = readString(entry.type, `${label}.type`, diagnostics);
+        const allowedKeys = type === "command" ? COMMAND_CHECK_KEYS : type === "procedure" ? PROCEDURE_CHECK_KEYS : new Set([...COMMAND_CHECK_KEYS, ...PROCEDURE_CHECK_KEYS]);
+        rejectUnknownKeys(entry, allowedKeys, label, diagnostics);
+        if (entry.type === undefined && entry.kind !== undefined) {
+            report(diagnostics, "SPEC_UNKNOWN_KEY", `${label}: use "type: command|procedure" instead of "kind"; command checks take argv, and expect.exitCode instead of expectExitCode`, label);
+        }
         if (type === "command") {
-            expectKeys(check, COMMAND_CHECK_KEYS, `checks[${index}]`);
-            const argv = expectStringArray(check.argv, `checks[${index}].argv`);
-            if (argv.length === 0)
-                throw new UlwError("SPEC_CHECK", `checks[${index}].argv must not be empty`);
-            const cwd = check.cwd === undefined ? "." : assertSafeRelativePath(expectString(check.cwd, `checks[${index}].cwd`), `checks[${index}].cwd`);
-            const timeoutMs = check.timeoutMs === undefined ? DEFAULT_CHECK_TIMEOUT_MS : Number(check.timeoutMs);
-            if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_CHECK_TIMEOUT_MS) {
-                throw new UlwError("SPEC_CHECK", `checks[${index}].timeoutMs must be 1..${MAX_CHECK_TIMEOUT_MS}`);
+            const argv = readStringArray(entry.argv, `${label}.argv`, diagnostics);
+            if (argv !== undefined && argv.length === 0) {
+                report(diagnostics, "SPEC_CHECK", `${label}.argv must not be empty`, label);
             }
-            return {
+            const rawCwd = entry.cwd === undefined ? "." : readString(entry.cwd, `${label}.cwd`, diagnostics);
+            let cwd;
+            if (rawCwd !== undefined) {
+                try {
+                    cwd = assertSafeRelativePath(rawCwd, `${label}.cwd`);
+                }
+                catch (error) {
+                    capture(diagnostics, error, label);
+                }
+            }
+            const rawTimeout = entry.timeoutMs === undefined ? DEFAULT_CHECK_TIMEOUT_MS : Number(entry.timeoutMs);
+            if (!Number.isInteger(rawTimeout) || rawTimeout < 1 || rawTimeout > MAX_CHECK_TIMEOUT_MS) {
+                report(diagnostics, "SPEC_CHECK", `${label}.timeoutMs must be 1..${MAX_CHECK_TIMEOUT_MS}`, label);
+                ok = false;
+            }
+            const expect = readExpectation(entry.expect, `${label}.expect`, diagnostics);
+            if (id === undefined || argv === undefined || argv.length === 0 || cwd === undefined || expect === undefined) {
+                ok = false;
+                continue;
+            }
+            out.push({
                 id,
                 type: "command",
-                description: check.description === undefined ? `Command check ${id}` : expectString(check.description, `checks[${index}].description`),
+                description: entry.description === undefined ? `Command check ${id}` : (readString(entry.description, `${label}.description`, diagnostics) ?? `Command check ${id}`),
                 argv,
                 cwd,
-                timeoutMs,
-                expect: parseExpectation(check.expect, `checks[${index}].expect`),
-            };
+                timeoutMs: rawTimeout,
+                expect,
+            });
+            continue;
         }
         if (type === "procedure") {
-            expectKeys(check, PROCEDURE_CHECK_KEYS, `checks[${index}]`);
-            return {
+            const steps = readStringArray(entry.steps, `${label}.steps`, diagnostics);
+            if (steps !== undefined && steps.length === 0) {
+                report(diagnostics, "SPEC_CHECK", `${label}.steps must not be empty`, label);
+            }
+            const expected = readString(entry.expected, `${label}.expected`, diagnostics);
+            const requiredTools = entry.requiredTools === undefined ? [] : readStringArray(entry.requiredTools, `${label}.requiredTools`, diagnostics);
+            if (id === undefined || steps === undefined || steps.length === 0 || expected === undefined || requiredTools === undefined) {
+                ok = false;
+                continue;
+            }
+            out.push({
                 id,
                 type: "procedure",
-                description: check.description === undefined ? `Procedure check ${id}` : expectString(check.description, `checks[${index}].description`),
-                steps: expectStringArray(check.steps, `checks[${index}].steps`),
-                expected: expectString(check.expected, `checks[${index}].expected`),
-                requiredTools: check.requiredTools === undefined ? [] : expectStringArray(check.requiredTools, `checks[${index}].requiredTools`),
-            };
+                description: entry.description === undefined ? `Procedure check ${id}` : (readString(entry.description, `${label}.description`, diagnostics) ?? `Procedure check ${id}`),
+                steps,
+                expected,
+                requiredTools,
+            });
+            continue;
         }
-        throw new UlwError("SPEC_CHECK", `checks[${index}].type must be command or procedure`);
-    });
+        if (type !== undefined) {
+            report(diagnostics, "SPEC_CHECK", `${label}.type must be "command" or "procedure", got ${JSON.stringify(type)}`, label);
+        }
+        ok = false;
+    }
+    return ok ? out : undefined;
 }
-function parseReview(value) {
+function readReview(value, diagnostics) {
     if (value === undefined)
         return { risk: "low", requireAdversarial: false };
-    const review = expectRecord(value, "review");
-    expectKeys(review, REVIEW_KEYS, "review");
-    const risk = (review.risk === undefined ? "low" : expectString(review.risk, "review.risk"));
-    if (!["low", "medium", "high"].includes(risk))
-        throw new UlwError("SPEC_REVIEW", "review.risk must be low, medium, or high");
-    const requireAdversarial = review.requireAdversarial === undefined ? false : review.requireAdversarial;
-    if (typeof requireAdversarial !== "boolean")
-        throw new UlwError("SPEC_REVIEW", "review.requireAdversarial must be boolean");
+    if (!isRecord(value)) {
+        report(diagnostics, "SPEC_SHAPE", "review must be a mapping", "review");
+        return undefined;
+    }
+    rejectUnknownKeys(value, REVIEW_KEYS, "review", diagnostics);
+    const rawRisk = value.risk === undefined ? "low" : readString(value.risk, "review.risk", diagnostics);
+    let risk;
+    if (rawRisk !== undefined) {
+        if (!["low", "medium", "high"].includes(rawRisk)) {
+            report(diagnostics, "SPEC_REVIEW", 'review.risk must be "low", "medium" or "high"', "review");
+        }
+        else {
+            risk = rawRisk;
+        }
+    }
+    const requireAdversarial = value.requireAdversarial === undefined ? false : value.requireAdversarial;
+    if (typeof requireAdversarial !== "boolean") {
+        report(diagnostics, "SPEC_REVIEW", "review.requireAdversarial must be boolean", "review");
+        return undefined;
+    }
+    if (risk === undefined)
+        return undefined;
     return { risk, requireAdversarial };
 }
-export function parseSpec(content) {
+/**
+ * Parse a spec and collect every structural error instead of failing fast. The
+ * returned `parsed` is only present when the file is structurally valid; lint
+ * diagnostics are deliberately left to the caller so `parseSpec` keeps its
+ * historical meaning.
+ */
+export function analyzeSpec(content) {
+    const hash = sha256(content);
+    const diagnostics = [];
     const bytes = Buffer.byteLength(content, "utf8");
-    if (bytes > MAX_SPEC_BYTES)
-        throw new UlwError("SPEC_TOO_LARGE", `spec exceeds ${MAX_SPEC_BYTES} bytes`);
-    const { yaml, body } = parseFrontmatter(content);
+    if (bytes > MAX_SPEC_BYTES) {
+        report(diagnostics, "SPEC_TOO_LARGE", `spec exceeds ${MAX_SPEC_BYTES} bytes`);
+        return { diagnostics, hash };
+    }
+    let yaml;
+    let body;
+    try {
+        ({ yaml, body } = parseFrontmatter(content));
+    }
+    catch (error) {
+        capture(diagnostics, error);
+        return { diagnostics, hash };
+    }
     const document = parseDocument(yaml, { uniqueKeys: true, prettyErrors: true });
     if (document.errors.length > 0) {
-        throw new UlwError("SPEC_YAML", document.errors.map((error) => error.message).join("; "));
+        for (const error of document.errors)
+            report(diagnostics, "SPEC_YAML", error.message);
+        return { diagnostics, hash };
     }
     const raw = document.toJS({ maxAliasCount: 0 });
-    const root = expectRecord(raw, "spec");
-    expectKeys(root, TOP_KEYS, "spec");
-    for (const key of ["schema", "id", "title", "requirements", "tasks", "checks"]) {
-        if (root[key] === undefined)
-            throw new UlwError("SPEC_MISSING", `spec.${key} is required`);
+    if (!isRecord(raw)) {
+        report(diagnostics, "SPEC_SHAPE", "spec must be a mapping");
+        return { diagnostics, hash };
     }
-    const schema = expectString(root.schema, "spec.schema");
-    if (schema !== SPEC_SCHEMA)
-        throw new UlwError("SPEC_SCHEMA", `unsupported spec schema: ${schema}`);
-    const id = expectString(root.id, "spec.id");
-    if (!isSpecSlug(id))
-        throw new UlwError("SPEC_ID", "spec.id must be a lowercase kebab-case slug up to 80 characters");
-    const nonGoals = root.nonGoals === undefined ? [] : expectStringArray(root.nonGoals, "spec.nonGoals");
+    rejectUnknownKeys(raw, TOP_KEYS, "spec", diagnostics);
+    for (const key of ["schema", "id", "title", "requirements", "tasks", "checks"]) {
+        if (raw[key] === undefined)
+            report(diagnostics, "SPEC_MISSING", `spec.${key} is required`);
+    }
+    const schema = readString(raw.schema, "spec.schema", diagnostics);
+    if (schema !== undefined && schema !== SPEC_SCHEMA) {
+        report(diagnostics, "SPEC_SCHEMA", `unsupported spec schema: ${schema}; expected ${SPEC_SCHEMA}`);
+    }
+    const id = readString(raw.id, "spec.id", diagnostics);
+    if (id !== undefined && !isSpecSlug(id)) {
+        report(diagnostics, "SPEC_ID", "spec.id must be a lowercase kebab-case slug up to 80 characters");
+    }
+    const title = readString(raw.title, "spec.title", diagnostics);
+    const sources = raw.sources === undefined ? [] : readSources(raw.sources, diagnostics);
+    const requirements = readRequirements(raw.requirements, diagnostics);
+    const nonGoals = raw.nonGoals === undefined ? [] : readStringArray(raw.nonGoals, "spec.nonGoals", diagnostics);
+    const tasks = readTasks(raw.tasks, diagnostics);
+    const checks = readChecks(raw.checks, diagnostics);
+    const review = readReview(raw.review, diagnostics);
+    const declaredID = typeof raw.id === "string" ? raw.id : undefined;
+    if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
+        return { diagnostics, hash, ...(declaredID === undefined ? {} : { declaredID }) };
+    }
+    if (schema === undefined ||
+        id === undefined ||
+        title === undefined ||
+        sources === undefined ||
+        requirements === undefined ||
+        nonGoals === undefined ||
+        tasks === undefined ||
+        checks === undefined ||
+        review === undefined) {
+        report(diagnostics, "SPEC_INVALID", "spec could not be parsed completely");
+        return { diagnostics, hash, ...(declaredID === undefined ? {} : { declaredID }) };
+    }
     const spec = {
         schema: SPEC_SCHEMA,
         id,
-        title: expectString(root.title, "spec.title"),
-        sources: root.sources === undefined ? [] : parseSources(root.sources),
-        requirements: parseRequirements(root.requirements),
+        title,
+        sources,
+        requirements,
         nonGoals,
-        tasks: parseTasks(root.tasks),
-        checks: parseChecks(root.checks),
-        review: parseReview(root.review),
+        tasks,
+        checks,
+        review,
     };
-    return { spec, body, sha256: sha256(content), content };
+    return {
+        parsed: { spec, body, sha256: hash, content },
+        diagnostics,
+        hash,
+        ...(declaredID === undefined ? {} : { declaredID }),
+    };
+}
+export function parseSpec(content) {
+    const analysis = analyzeSpec(content);
+    const errors = analysis.diagnostics.filter((diagnostic) => diagnostic.severity === "error");
+    if (analysis.parsed === undefined || errors.length > 0) {
+        throw new UlwError("SPEC_INVALID", errors.length === 0 ? "spec could not be parsed" : errors.map((entry) => `${entry.code}: ${entry.message}`).join("; "));
+    }
+    return analysis.parsed;
 }
 export function hasPlaceholder(value) {
     return PLACEHOLDER_RE.test(value);

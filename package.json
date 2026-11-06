@@ -1,12 +1,19 @@
 {
   "name": "oc2-ulw-plan",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "OpenCode V2 spec planning and execution workflow: /ulw-plan, /ulw-execute, /ulw-status with frozen specs, evidence and independent review.",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/beiyanpiki/oc2-ulw-plan.git"
+  },
+  "homepage": "https://github.com/beiyanpiki/oc2-ulw-plan#readme",
+  "bugs": {
+    "url": "https://github.com/beiyanpiki/oc2-ulw-plan/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "main": "./dist/index.js",
   "bin": {
@@ -37,6 +44,7 @@
     "test:integration": "tsx --test test/integration/*.test.ts",
     "test:host": "npm run build && tsx --test test/host/*.test.ts",
     "test:smoke": "tsx --test test/smoke/*.test.ts",
+    "prepublishOnly": "npm run build",
     "verify": "npm run lint && npm run test && npm run test:host && npm pack --dry-run"
   },
   "dependencies": {

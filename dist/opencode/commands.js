@@ -1,7 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { UlwError } from "../core/errors.js";
+import { SPEC_SCHEMA_GUIDE } from "../core/guide.js";
 import { isWithin, isSpecSlug } from "../core/spec.js";
+import { DiagnoseService } from "./diagnose-service.js";
 import { SpecService } from "./spec-service.js";
 import { RunService } from "./run-service.js";
 import { prepareWorktree } from "./worktree.js";
@@ -86,6 +88,9 @@ export async function registerCommands(ctx, runtime) {
                 const prompt = [
                     skill,
                     "",
+                    "SPEC SCHEMA (authoritative; do not invent keys)",
+                    SPEC_SCHEMA_GUIDE,
+                    "",
                     "COMMAND",
                     sourceSpec === undefined ? "The user invoked /ulw-plan with a new request." : `The user invoked /ulw-plan --spec ${sourceSpec}.`,
                     requestedID === undefined ? "Choose and record a canonical spec id through ulw_spec action=begin." : `Use spec id: ${requestedID}`,
@@ -105,23 +110,42 @@ export async function registerCommands(ctx, runtime) {
             name: "ulw-execute",
             description: "Authorize and execute a published ulw spec; --resume continues a paused run.",
             execute: async (invocation) => {
-                const args = parseArgs(commandText(invocation), ["--resume", "--worktree"], ["--parallel", "--recover"]);
+                const args = parseArgs(commandText(invocation), ["--resume", "--worktree"], ["--parallel", "--recover", "--takeover"]);
                 const session = await runtime.session(invocation.sessionID);
                 const canonical = runtime.sessionWorkspace(session);
                 let resumeID = args.values.get("--resume");
                 const specID = args.positionals[0];
                 const worktreeRequest = args.values.get("--worktree");
+                const takeover = args.flags.has("--takeover");
                 if (resumeID === undefined && args.flags.has("--recover")) {
-                    const candidates = (await runtime.store(canonical).listRuns())
-                        .map((entry) => entry.value)
-                        .filter((run) => run.ownerSessionID === invocation.sessionID && run.status === "paused" && (specID === undefined || run.specId === specID))
-                        .sort((left, right) => right.updatedAt - left.updatedAt);
-                    if (candidates.length === 0)
-                        throw new UlwError("ARGS", "--recover found no paused run for this session and spec");
-                    resumeID = candidates[0]?.id;
+                    const allRuns = (await runtime.store(canonical).listRuns()).map((entry) => entry.value);
+                    const candidates = [];
+                    for (const run of allRuns) {
+                        if (!["paused", "running", "final_verification"].includes(run.status))
+                            continue;
+                        if (specID !== undefined && run.specId !== specID)
+                            continue;
+                        if (run.ownerSessionID === invocation.sessionID) {
+                            candidates.push(run);
+                            continue;
+                        }
+                        const owner = await runtime.session(run.ownerSessionID).catch(() => undefined);
+                        const busy = owner?.time?.busy !== undefined && (owner.time.idle === undefined || owner.time.busy > owner.time.idle);
+                        if (owner === undefined || owner.outcome === "interrupted" || owner.outcome === "failed" || !busy)
+                            candidates.push(run);
+                    }
+                    const latest = candidates.sort((left, right) => right.updatedAt - left.updatedAt)[0];
+                    const own = candidates.filter((run) => run.ownerSessionID === invocation.sessionID);
+                    const chosen = own.sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? latest;
+                    if (chosen === undefined)
+                        throw new UlwError("ARGS", "--recover found no paused or orphaned run for this workspace and spec");
+                    if (chosen.ownerSessionID !== invocation.sessionID && !takeover) {
+                        throw new UlwError("ARGS", `run ${chosen.id} belongs to session ${chosen.ownerSessionID}; rerun with --takeover to recover it`);
+                    }
+                    resumeID = chosen.id;
                 }
                 if (resumeID === undefined && (specID === undefined || !isSpecSlug(specID))) {
-                    throw new UlwError("ARGS", "usage: /ulw-execute <spec-id> [--parallel] [--worktree auto|path] or /ulw-execute --resume <run-id>");
+                    throw new UlwError("ARGS", "usage: /ulw-execute <spec-id> [--parallel] [--worktree auto|path] or /ulw-execute --recover [<spec-id>] [--takeover]");
                 }
                 if (resumeID !== undefined && worktreeRequest !== undefined) {
                     throw new UlwError("ARGS", "--worktree cannot be combined with --resume; the run already records its workspace");
@@ -130,7 +154,7 @@ export async function registerCommands(ctx, runtime) {
                 if (!(await runtime.agentExists("ulw-exec")))
                     throw new UlwError("AGENT_PROFILE_MISSING", "ulw-exec profile is not installed; run oc2-ulw-plan init");
                 const run = resumeID !== undefined
-                    ? await runs.resume(resumeID, invocation.sessionID)
+                    ? await runs.resume(resumeID, invocation.sessionID, undefined, takeover)
                     : await runs.start({
                         specId: specID,
                         sessionID: invocation.sessionID,
@@ -164,10 +188,12 @@ export async function registerCommands(ctx, runtime) {
         });
         editor.add({
             name: "ulw-status",
-            description: "Show the Host-computed ulw spec/run status, evidence, reviews and next action.",
+            description: "Show the Host-computed ulw spec/run status. Add --diagnose for specs, runs, roles, the lock and recent failures.",
             execute: async (invocation) => {
                 const raw = commandText(invocation);
-                const target = raw.split(/\s+/)[0] ?? "";
+                const tokens = raw.split(/\s+/).filter(Boolean);
+                const diagnose = tokens.includes("--diagnose");
+                const target = tokens.find((token) => !token.startsWith("--")) ?? "";
                 const session = await runtime.session(invocation.sessionID);
                 const workspace = runtime.sessionWorkspace(session);
                 const store = runtime.store(workspace);
@@ -187,6 +213,7 @@ export async function registerCommands(ctx, runtime) {
                             `# ulw spec ${record.id}`,
                             `status: ${record.status}`,
                             `risk: ${record.risk}`,
+                            `strict: ${record.strict === true ? "yes" : "no"}`,
                             `hash: ${record.contentHash}`,
                             `practical: ${record.practical?.verdict ?? "none"}`,
                             `adversarial: ${record.adversarial?.verdict ?? "none"}`,
@@ -200,12 +227,16 @@ export async function registerCommands(ctx, runtime) {
                             "# ulw status",
                             "",
                             "## Specs",
-                            ...(list.length === 0 ? ["- none"] : list.map((entry) => `- ${entry.id}: ${entry.status} (${entry.risk})`)),
+                            ...(list.length === 0 ? ["- none"] : list.map((entry) => `- ${entry.id}: ${entry.status} (${entry.risk}) [${entry.kind}]`)),
                             "",
                             "## Runs",
                             ...(runList.length === 0 ? ["- none"] : runList.map((entry) => `- ${entry.id}: ${entry.status} (${entry.specId})`)),
                         ].join("\n");
                     }
+                }
+                if (diagnose) {
+                    const snapshot = await new DiagnoseService(runtime).report(invocation.sessionID, 20);
+                    text = [text, "", snapshot.text].join("\n");
                 }
                 const prompt = [
                     "The Host computed the following ulw status. Present it to the user faithfully; do not invent or upgrade any state.",

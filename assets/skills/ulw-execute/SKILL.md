@@ -9,7 +9,7 @@ You are the executor. A run has already been created and authorized by `/ulw-exe
 
 ## Workflow
 
-1. Read the current run with `ulw_run action=status`. Read the spec and the task dependency graph.
+1. Read the current run with `ulw_run action=status`. Read the spec and the task dependency graph. If the run is paused or the previous owner session was interrupted, resume it through the Host (`/ulw-execute --resume <run-id>` or `--recover <spec-id> --takeover`); never create a second run for the same spec.
 2. Select a `pending` task whose dependencies are `checked` or `passed`. Call `ulw_run action=claim taskId=<T>`.
 3. Implement directly in that task's exact file scope. Read relevant tests first. Keep changes limited to the frozen task.
 4. Run every command check in the task with `ulw_check checkId=<V> taskId=<T>`. Do not claim a check passed unless the tool returned `PASS`. Procedure checks are verified by G, not by the executor.

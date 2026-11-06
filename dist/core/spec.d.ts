@@ -12,6 +12,19 @@ export declare function parseFrontmatter(content: string): {
     yaml: string;
     body: string;
 };
+export interface SpecAnalysis {
+    parsed?: ParsedSpec;
+    diagnostics: Diagnostic[];
+    hash: string;
+    declaredID?: string;
+}
+/**
+ * Parse a spec and collect every structural error instead of failing fast. The
+ * returned `parsed` is only present when the file is structurally valid; lint
+ * diagnostics are deliberately left to the caller so `parseSpec` keeps its
+ * historical meaning.
+ */
+export declare function analyzeSpec(content: string): SpecAnalysis;
 export declare function parseSpec(content: string): ParsedSpec;
 export declare function hasPlaceholder(value: string): boolean;
 export declare function inferRisk(spec: Spec, body: string): Risk;

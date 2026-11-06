@@ -1,7 +1,7 @@
 import { UlwError } from "./errors.js";
 import { effectiveRisk, requiresAdversarial } from "./spec.js";
 import { isApprovedPlanReport } from "./reports.js";
-export function createSpecRecord(parsed, workspace, sourceHashes, requireAdversarial) {
+export function createSpecRecord(parsed, workspace, sourceHashes, requireAdversarial, strict = false) {
     const now = Date.now();
     return {
         schema: "ulw-spec-record/v1",
@@ -11,7 +11,29 @@ export function createSpecRecord(parsed, workspace, sourceHashes, requireAdversa
         contentHash: parsed.sha256,
         sourceHashes,
         requireAdversarial,
+        strict,
         risk: effectiveRisk(parsed.spec, parsed.body),
+        rounds: 0,
+        createdAt: now,
+        updatedAt: now,
+    };
+}
+/**
+ * A record for content that was written but is not yet structurally valid.
+ * It keeps the artifact discoverable without ever looking publishable.
+ */
+export function createPendingSpecRecord(id, workspace, contentHash, strict) {
+    const now = Date.now();
+    return {
+        schema: "ulw-spec-record/v1",
+        id,
+        workspace,
+        status: "draft",
+        contentHash,
+        sourceHashes: {},
+        requireAdversarial: strict,
+        strict,
+        risk: "low",
         rounds: 0,
         createdAt: now,
         updatedAt: now,

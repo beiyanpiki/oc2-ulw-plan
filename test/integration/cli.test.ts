@@ -65,6 +65,59 @@ test("init preserves JSONC config, is idempotent and uninstall removes only owne
   }
 });
 
+test("diagnose validates specs, reports drafts and reads the diagnostics journal", async () => {
+  const root = await mkdtemp(join(tmpdir(), "oc2-ulw-cli-"));
+  const home = join(root, "home");
+  const project = join(root, "project");
+  await mkdir(join(project, ".opencode", "ulw", "specs"), { recursive: true });
+  await mkdir(join(project, ".opencode", "ulw", "drafts"), { recursive: true });
+  await mkdir(home, { recursive: true });
+  const valid = `---
+schema: ulw-spec/v1
+id: good
+title: Good spec
+requirements:
+  - id: R1
+    text: The behavior exists.
+nonGoals: [No extra work.]
+tasks:
+  - id: T1
+    title: Implement it
+    requirements: [R1]
+    files: [src/a.ts]
+    checks: [V1]
+checks:
+  - id: V1
+    type: command
+    argv: [node, -e, "process.exit(0)"]
+review:
+  risk: low
+---
+
+## Design
+
+A valid minimal spec used by the diagnose integration test. It has one deterministic check and a narrow body.
+`;
+  await writeFile(join(project, ".opencode", "ulw", "specs", "good.md"), valid);
+  await writeFile(join(project, ".opencode", "ulw", "specs", "bad.md"), valid.replace("id: good", "id: bad").replace("    files: [src/a.ts]", "    files: [src/a.ts]\n    acceptance: true"));
+  await writeFile(join(project, ".opencode", "ulw", "drafts", "pending.md"), "---\nid: pending\n---\n");
+  await writeFile(
+    join(project, ".opencode", "ulw", "diagnostics.jsonl"),
+    `${JSON.stringify({ schema: "ulw-diagnostic/v1", at: Date.now(), workspace: project, tool: "ulw_spec", action: "write", code: "SPEC_UNKNOWN_KEY", message: "tasks[0]: unknown key" })}\n`,
+  );
+  try {
+    const result = await cli(["diagnose", "--project", project], home);
+    assert.equal(result.code, 1);
+    assert.match(result.stdout, /good: valid/);
+    assert.match(result.stdout, /bad: INVALID/);
+    assert.match(result.stdout, /SPEC_UNKNOWN_KEY/);
+    assert.match(result.stdout, /pending: draft/);
+    assert.match(result.stdout, /ulw_spec\/write SPEC_UNKNOWN_KEY/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("init refuses to overwrite a user profile", async () => {
   const root = await mkdtemp(join(tmpdir(), "oc2-ulw-cli-"));
   const home = join(root, "home");

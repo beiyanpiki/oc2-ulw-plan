@@ -40,6 +40,11 @@ export declare class RoleService {
     start(input: RoleStartInput, parent: RoleStartContext): Promise<RoleResult>;
     private prepareTarget;
     private loadSpec;
+    /**
+     * Explorers, librarians and consultants may run before the executable spec
+     * exists. A draft is a valid research target and is not parsed as a spec.
+     */
+    private loadResearchTarget;
     private loadRunTarget;
     private buildPrompt;
     private finish;

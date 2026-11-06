@@ -10,6 +10,7 @@ export function createSpecRecord(
   workspace: string,
   sourceHashes: Record<string, string>,
   requireAdversarial: boolean,
+  strict = false,
 ): SpecRecord {
   const now = Date.now();
   return {
@@ -20,7 +21,30 @@ export function createSpecRecord(
     contentHash: parsed.sha256,
     sourceHashes,
     requireAdversarial,
+    strict,
     risk: effectiveRisk(parsed.spec, parsed.body),
+    rounds: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/**
+ * A record for content that was written but is not yet structurally valid.
+ * It keeps the artifact discoverable without ever looking publishable.
+ */
+export function createPendingSpecRecord(id: string, workspace: string, contentHash: string, strict: boolean): SpecRecord {
+  const now = Date.now();
+  return {
+    schema: "ulw-spec-record/v1",
+    id,
+    workspace,
+    status: "draft",
+    contentHash,
+    sourceHashes: {},
+    requireAdversarial: strict,
+    strict,
+    risk: "low",
     rounds: 0,
     createdAt: now,
     updatedAt: now,

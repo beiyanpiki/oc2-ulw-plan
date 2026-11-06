@@ -97,6 +97,7 @@ export interface SpecRecord {
   contentHash: string;
   sourceHashes: Record<string, string>;
   requireAdversarial: boolean;
+  strict?: boolean;
   risk: Risk;
   practical?: SpecReviewRef;
   adversarial?: SpecReviewRef;
@@ -180,6 +181,7 @@ export interface RoleInvocation {
   runId?: string;
   taskId?: string;
   targetHash?: string;
+  budgetKey?: string;
   status: "running" | "completed" | "failed" | "cancelled" | "timed_out";
   reportId?: string;
   createdAt: number;

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createFakeContext } from "../helpers/fake-context.js";
+import { readLock } from "../../src/io/lock.js";
 import { Runtime } from "../../src/opencode/runtime.js";
 import { SpecService } from "../../src/opencode/spec-service.js";
 import { RunService } from "../../src/opencode/run-service.js";
@@ -44,6 +45,99 @@ review:
 
 The sample implementation adds a pure addition function and one deterministic test. It intentionally avoids external services, new dependencies, and unrelated behavior.
 `;
+
+test("an interrupted owner's run can be taken over explicitly", { timeout: 30_000 }, async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "oc2-ulw-takeover-"));
+  await exec("git", ["-C", workspace, "init", "-q"]);
+  await exec("git", ["-C", workspace, "config", "user.email", "test@example.com"]);
+  await exec("git", ["-C", workspace, "config", "user.name", "Test"]);
+  await writeFile(join(workspace, "README.md"), "fixture\n");
+  await exec("git", ["-C", workspace, "add", "."]);
+  await exec("git", ["-C", workspace, "commit", "-qm", "initial"]);
+
+  const fake = createFakeContext({ workspace });
+  const owner = await fake.ctx.session.create({ title: "owner", agent: "ulw-exec", location: { directory: workspace } });
+  const next = await fake.ctx.session.create({ title: "next", agent: "ulw-exec", location: { directory: workspace } });
+  const runtime = new Runtime(fake.ctx);
+  const store = runtime.store(workspace);
+  const specs = new SpecService(runtime);
+  const runs = new RunService(runtime);
+  const spec = `---
+schema: ulw-spec/v1
+id: takeover-sample
+title: Takeover sample
+requirements:
+  - id: R1
+    text: The takeover behavior exists.
+nonGoals: [No extra work.]
+tasks:
+  - id: T1
+    title: Implement it
+    requirements: [R1]
+    files: [src/a.ts]
+    checks: [V1]
+checks:
+  - id: V1
+    type: procedure
+    steps: [Inspect the result]
+    expected: The result is correct
+review:
+  risk: low
+---
+
+## Design
+
+A minimal procedure-only spec used to test explicit run takeover after the owner session is interrupted.
+`;
+  const validation = await specs.write({ id: "takeover-sample", content: spec }, owner.id);
+  assert.equal(validation.valid, true, JSON.stringify(validation.diagnostics));
+  const record = await store.getSpec<SpecRecord>("takeover-sample");
+  assert.ok(record !== undefined);
+  record.status = "ready";
+  const report: ReportRecord = {
+    schema: "ulw-report/v1",
+    id: "report-takeover",
+    invocationId: "role-takeover",
+    role: "practical-reviewer",
+    workspace,
+    childSessionID: "ses_takeover",
+    specId: "takeover-sample",
+    targetHash: record.contentHash,
+    payload: { verdict: "approved", blockers: [], notes: [], escalate: false } as never,
+    createdAt: Date.now(),
+  };
+  await store.setReport(report.id, report);
+  await store.setInvocation("role-takeover", {
+    schema: "ulw-role-invocation/v1",
+    id: "role-takeover",
+    role: "practical-reviewer",
+    workspace,
+    parentSessionID: owner.id,
+    childSessionID: "ses_takeover",
+    agent: "ulw-readonly",
+    specId: "takeover-sample",
+    targetHash: record.contentHash,
+    status: "completed",
+    reportId: report.id,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  record.practical = { hash: record.contentHash, round: 1, verdict: "approved", invocationId: "role-takeover", at: Date.now() };
+  await store.setSpec("takeover-sample", record);
+
+  const run = await runs.start({ specId: "takeover-sample", sessionID: owner.id, agent: "ulw-exec", projectID: "project" });
+  await runs.claim(run.id, "T1", owner.id);
+  await assert.rejects(() => runs.resume(run.id, next.id), /belongs to another session/);
+  const ownerSession = fake.sessions.get(owner.id);
+  assert.ok(ownerSession !== undefined);
+  ownerSession.outcome = "interrupted";
+  ownerSession.time = { ...ownerSession.time, busy: Date.now() - 1000, idle: Date.now() };
+  const resumed = await runs.resume(run.id, next.id, undefined, true);
+  assert.equal(resumed.ownerSessionID, next.id);
+  assert.equal(resumed.status, "running");
+  const lock = await readLock(workspace);
+  assert.equal(lock?.sessionID, next.id);
+});
 
 test("a spec can be written, executed, checked, frozen, verified and finalized", { timeout: 30_000 }, async () => {
   const workspace = await mkdtemp(join(tmpdir(), "oc2-ulw-service-"));
