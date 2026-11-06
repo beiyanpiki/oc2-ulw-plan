@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { UlwError } from "../core/errors.js";
-import { computeSourceHashes, effectiveRisk, hasPlaceholder, isSpecSlug, lintSpec, parseSpec, verifySpecPaths } from "../core/spec.js";
+import { computeSourceHashes, effectiveRisk, hasPlaceholder, isSpecSlug, isWithin, lintSpec, parseSpec, verifySpecPaths } from "../core/spec.js";
 import type { Diagnostic, ParsedSpec, SpecRecord } from "../core/types.js";
 import { createSpecRecord, loadSpecRecord, publishRecord, saveSpecRecord, setStatus, verifyPlanReview } from "../core/spec-record.js";
 import { atomicWriteFile, ensureArtifactDir, readFilePage } from "../io/paths.js";
@@ -281,7 +281,7 @@ export class SpecService {
   async roughDraft(path: string, sessionID: string): Promise<{ content: string; placeholders: boolean }> {
     const { workspace } = await this.runtime.workspaceOfSession(sessionID);
     const absolute = join(workspace, path);
-    if (!absolute.startsWith(workspace)) throw new UlwError("PATH_TRAVERSAL", "draft path leaves the workspace");
+    if (!isWithin(workspace, absolute)) throw new UlwError("PATH_TRAVERSAL", "draft path leaves the workspace");
     const content = await readFile(absolute, "utf8");
     return { content, placeholders: hasPlaceholder(content) };
   }

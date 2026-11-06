@@ -11,5 +11,6 @@ export async function resolveWorkspace(input: string): Promise<string> {
 }
 
 export function workspaceKey(workspace: string): string {
-  return workspace.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  const normalized = workspace.replaceAll("\\", "/").replace(/\/+$/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }

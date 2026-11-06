@@ -5,6 +5,7 @@ import type { RoleName, RunRecord, SpecRecord } from "../core/types.js";
 import { UlwError } from "../core/errors.js";
 import { WorkspaceStore, type JsonStore } from "../core/store.js";
 import type { SessionInfo } from "./session.js";
+import { workspaceKey } from "../io/workspace.js";
 
 export interface UlwOptions {
   roleTimeoutMs: number;
@@ -77,7 +78,7 @@ export class Runtime {
   }
 
   store(workspace: string): WorkspaceStore {
-    const key = workspace.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+    const key = workspaceKey(workspace);
     let store = this.stores.get(key);
     if (store === undefined) {
       store = new WorkspaceStore(this.baseStore, key);

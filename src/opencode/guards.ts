@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import type { PluginContext } from "./context.js";
 import { Runtime } from "./runtime.js";
 import { RunService } from "./run-service.js";
@@ -34,7 +34,7 @@ function relativeTarget(workspace: string, target: string): string | undefined {
   if (trimmed === "" || trimmed.includes("\0")) return undefined;
   const absolute = resolve(workspace, trimmed);
   if (!isWithin(workspace, absolute)) return undefined;
-  return trimmed;
+  return relative(workspace, absolute).replaceAll("\\", "/");
 }
 
 export async function registerGuards(ctx: PluginContext, runtime: Runtime): Promise<void> {

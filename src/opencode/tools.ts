@@ -70,6 +70,15 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
       async execute(raw: unknown, tool: ToolContextLike) {
         const input = raw as ToolInput;
         const action = stringInput(input, "action");
+        const { workspace } = await runtime.workspaceOfSession(tool.sessionID);
+        const sessionStore = runtime.store(workspace);
+        if ((await sessionStore.getBinding(tool.sessionID)) !== undefined) {
+          throw new UlwError("ROLE_FORBIDDEN", "role sessions may not create or modify specs");
+        }
+        const activeRun = await runs.findSessionRun(workspace, tool.sessionID);
+        if (activeRun?.status === "running" || activeRun?.status === "final_verification") {
+          throw new UlwError("RUN_ACTIVE", "the spec is frozen while an execution run is active");
+        }
         if (action === "begin") {
           const result = await specs.begin(
             {
@@ -146,7 +155,10 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
         const input = raw as ToolInput;
         const action = stringInput(input, "action");
         const { workspace } = await runtime.workspaceOfSession(tool.sessionID);
-        const runId = stringInput(input, "runId", false) ?? (await runs.findActiveRun(workspace, tool.sessionID))?.id;
+        if ((await runtime.store(workspace).getBinding(tool.sessionID)) !== undefined) {
+          throw new UlwError("ROLE_FORBIDDEN", "role sessions may not mutate run state");
+        }
+        const runId = stringInput(input, "runId", false) ?? (action === "status" ? (await runs.findSessionRun(workspace, tool.sessionID))?.id : (await runs.findActiveRun(workspace, tool.sessionID))?.id);
         if (runId === undefined) throw new UlwError("RUN_REQUIRED", "no active run for this session");
         if (action === "status") {
           const result = await runs.status(runId, tool.sessionID);
@@ -245,6 +257,9 @@ export async function registerTools(ctx: PluginContext, runtime: Runtime): Promi
         const input = raw as ToolInput;
         const action = stringInput(input, "action");
         const { workspace } = await runtime.workspaceOfSession(tool.sessionID);
+        if ((await runtime.store(workspace).getBinding(tool.sessionID)) !== undefined) {
+          throw new UlwError("ROLE_NESTED", "a role session cannot start, wait for, or cancel another role");
+        }
         if (action === "list") {
           const list = await roles.list(tool.sessionID, workspace);
           return textResult(JSON.stringify(list, null, 2), { invocations: list });

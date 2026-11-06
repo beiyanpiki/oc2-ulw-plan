@@ -119,7 +119,7 @@ export async function captureBaseline(workspace: string, runID: string): Promise
     const record: BaselineFile = { path, sha256: hashed.sha256, kind: hashed.kind, dirty: dirty.has(path) };
     if (hashed.bytes !== undefined && (dirty.has(path) || hashed.kind === "symlink")) {
       if (snapshotBytes + hashed.bytes.byteLength <= MAX_SNAPSHOT_BYTES) {
-        const snapshot = join(snapshotRoot, path.replaceAll("/", "__"));
+        const snapshot = join(snapshotRoot, `${createHash("sha256").update(path).digest("hex").slice(0, 24)}.baseline`);
         await atomicWriteFile(snapshot, hashed.bytes);
         record.snapshotPath = snapshot;
         snapshotBytes += hashed.bytes.byteLength;

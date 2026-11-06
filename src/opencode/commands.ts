@@ -80,6 +80,7 @@ export async function registerCommands(ctx: PluginContext, runtime: Runtime): Pr
         if (requestedID !== undefined && !isSpecSlug(requestedID)) throw new UlwError("ARGS", "--id must be a lowercase kebab-case slug");
         const session = await runtime.session(invocation.sessionID);
         const workspace = runtime.sessionWorkspace(session);
+        if (!(await runtime.agentExists("ulw-plan"))) throw new UlwError("AGENT_PROFILE_MISSING", "ulw-plan profile is not installed; run oc2-ulw-plan init");
         await runtime.store(workspace).setPlan(invocation.sessionID, {
           schema: "ulw-plan-session/v1",
           strict: args.flags.has("--strict"),
@@ -144,7 +145,7 @@ export async function registerCommands(ctx: PluginContext, runtime: Runtime): Pr
           throw new UlwError("ARGS", "--worktree cannot be combined with --resume; the run already records its workspace");
         }
         const targetWorkspace = worktreeRequest === undefined ? canonical : await prepareWorktree(ctx, runtime, canonical, specID as string, worktreeRequest);
-        await runtime.switchAgent(invocation.sessionID, "ulw-exec");
+        if (!(await runtime.agentExists("ulw-exec"))) throw new UlwError("AGENT_PROFILE_MISSING", "ulw-exec profile is not installed; run oc2-ulw-plan init");
         const run =
           resumeID !== undefined
             ? await runs.resume(resumeID, invocation.sessionID)
@@ -156,6 +157,12 @@ export async function registerCommands(ctx: PluginContext, runtime: Runtime): Pr
                 workspace: targetWorkspace,
                 sessionWorkspace: canonical,
               });
+        try {
+          await runtime.switchAgent(invocation.sessionID, "ulw-exec");
+        } catch (error) {
+          await runs.pause(run.id, invocation.sessionID, "agent switch failed").catch(() => undefined);
+          throw error;
+        }
         const status = await runs.status(run.id, invocation.sessionID);
         const skill = await runtime.readAsset("skills", "ulw-execute", "SKILL.md");
         const prompt = [
@@ -187,8 +194,9 @@ export async function registerCommands(ctx: PluginContext, runtime: Runtime): Pr
           text = (await runs.status(target, invocation.sessionID)).text;
         } else {
           const active = await runs.findActiveRun(workspace, invocation.sessionID);
-          if (active !== undefined) {
-            text = (await runs.status(active.id, invocation.sessionID)).text;
+          const sessionRun = active ?? (await runs.findSessionRun(workspace, invocation.sessionID));
+          if (sessionRun !== undefined) {
+            text = (await runs.status(sessionRun.id, invocation.sessionID)).text;
           } else if (target !== "") {
             const record = await specs.status(target, invocation.sessionID);
             text = [

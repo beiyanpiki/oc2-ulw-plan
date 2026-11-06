@@ -177,6 +177,7 @@ async function doctor(input: { global: boolean; project: string; plugin?: string
     errors.push(`install manifest missing: ${scope.manifestPath}`);
   } else {
     const manifest = JSON.parse(manifestText) as Manifest;
+    const expectedPlugin = input.plugin ?? manifest.pluginEntry;
     for (const name of PROFILE_NAMES) {
       const target = join(scope.profileDir, `${name}.md`);
       const content = await readOptional(target);
@@ -192,8 +193,8 @@ async function doctor(input: { global: boolean; project: string; plugin?: string
     else {
       const parsed = parseConfig(config);
       if (parsed.errors.length > 0) errors.push(`config has parse errors: ${JSON.stringify(parsed.errors)}`);
-      else if (input.plugin !== undefined && !containsPlugin(pluginEntries(parsed.value), input.plugin)) {
-        errors.push(`plugin entry missing: ${input.plugin}`);
+      else if (expectedPlugin !== undefined && !containsPlugin(pluginEntries(parsed.value), expectedPlugin)) {
+        errors.push(`plugin entry missing: ${expectedPlugin}`);
       }
     }
     if (manifest.schema !== "oc2-ulw-install/v1") errors.push("install manifest has an unknown schema");

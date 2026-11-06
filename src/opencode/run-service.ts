@@ -202,6 +202,17 @@ export class RunService {
     return { run, text: lines.join("\n") };
   }
 
+  async findSessionRun(workspace: string, sessionID: string): Promise<RunRecord | undefined> {
+    const store = this.runtime.store(workspace);
+    const active = await store.getActive<ActiveRun>(sessionID);
+    if (active !== undefined && active.schema === "ulw-active-run/v1") {
+      const run = await this.runtime.store(active.workspace).getRun<RunRecord>(active.runID);
+      if (run !== undefined && run.ownerSessionID === sessionID) return run;
+    }
+    const runs = await store.listRuns<RunRecord>();
+    return runs.map((entry) => entry.value).filter((run) => run.ownerSessionID === sessionID).sort((left, right) => right.updatedAt - left.updatedAt)[0];
+  }
+
   async findActiveRun(workspace: string, sessionID: string): Promise<RunRecord | undefined> {
     const store = this.runtime.store(workspace);
     const active = await store.getActive<ActiveRun>(sessionID);
@@ -409,6 +420,17 @@ export class RunService {
     const store = this.runtime.store(workspace);
     const roleBinding = workspace === sessionWorkspace ? sessionBinding : await store.getBinding<{ runId?: string; taskId?: string; role?: string }>(sessionID);
     const run = await loadRun(store, runId);
+    if (roleBinding !== undefined && roleBinding.role !== "verifier" && roleBinding.role !== "worker") {
+      throw new UlwError("CHECK_ROLE", `${roleBinding.role ?? "role"} may not run checks`);
+    }
+    if (roleBinding === undefined) {
+      requireOwner(run, sessionID);
+    } else {
+      const binding = await store.getBinding<{ invocationID?: string }>(sessionID);
+      if (binding?.invocationID === undefined) throw new UlwError("ROLE_UNBOUND", "role check has no bound invocation");
+      const invocation = await store.getInvocation<RoleInvocation>(binding.invocationID);
+      if (invocation?.status !== "running") throw new UlwError("ROLE_CLOSED", `role invocation is ${invocation?.status ?? "missing"}`);
+    }
     if (run.status !== "running" && run.status !== "final_verification") throw new UlwError("RUN_STATE", `run is ${run.status}`);
     const taskID = input.taskId ?? roleBinding?.taskId;
     const file = await this.runtime.loadSpec(run.specId, workspace);

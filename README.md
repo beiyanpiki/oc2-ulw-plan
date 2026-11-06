@@ -62,6 +62,11 @@ node dist/cli.js uninstall --project /path/to/project
 `uninstall` removes only profiles and plugin entries recorded as package-owned,
 and preserves specs, runs, evidence and reports.
 
+After a planning or execution session, switch back to **Build** (or another
+ordinary agent) for unrelated edits. `ulw-plan` and `ulw-exec` are intentionally
+narrow profiles; `ulw-exec` rejects product side effects when no active run
+exists.
+
 ## Agent profiles
 
 | Profile | Used by |

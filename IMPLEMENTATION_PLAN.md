@@ -156,5 +156,6 @@ npm pack --dry-run                package contents verified
 
 - 2026-11-06：`practical-reviewer` 在 `role-smoke` 上返回绑定报告并批准；随后 `ulw_spec publish` 成功。
 - 2026-11-06：`explorer` 在 `role-smoke` 上返回绑定报告（约 20 秒），验证 session 状态轮询等待。
+- 2026-11-06：从 `npm pack` tarball 安装到隔离项目后，服务可加载 `ulw-plan`/`ulw-execute`/`ulw-status`、五个角色和两个技能。
 - 完整 Plan → Execute → G/H 的真实模型流程仍需在操作者配置的 provider 上做一次显式 smoke；自动化状态机已由 integration test 覆盖。
 
