@@ -300,17 +300,24 @@ export class RunService {
     const store = this.runtime.store(workspace);
     const run = await loadRun(store, runID);
     requireOwner(run, sessionID);
-    if (run.status !== "final_verification") throw new UlwError("RUN_STATE", `run is ${run.status}, not final_verification`);
+    if (run.status !== "final_verification" && run.status !== "running" && run.status !== "blocked") {
+      throw new UlwError("RUN_STATE", `run is ${run.status}; no task can be reopened`);
+    }
     const task = run.tasks[taskID];
     if (task === undefined) throw new UlwError("TASK_NOT_FOUND", `no task: ${taskID}`);
+    if (task.status !== "blocked" && task.status !== "checked" && task.status !== "passed") {
+      throw new UlwError("TASK_STATE", `task ${taskID} is ${task.status}, not blocked or checked`);
+    }
     task.status = "pending";
     delete task.fingerprint;
     delete task.checkedAt;
     if (reason === undefined) delete task.blockedReason;
     else task.blockedReason = reason;
-    delete run.verificationFingerprint;
-    delete run.finalDiffPath;
-    run.finalInvocations = {};
+    if (run.status === "final_verification") {
+      delete run.verificationFingerprint;
+      delete run.finalDiffPath;
+      run.finalInvocations = {};
+    }
     run.status = "running";
     await saveRun(store, run);
     return run;
