@@ -1,6 +1,6 @@
 {
   "name": "oc2-ulw-plan",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "OpenCode V2 spec planning and execution workflow: /ulw-plan, /ulw-execute, /ulw-status with frozen specs, evidence and independent review.",
   "type": "module",
   "license": "MIT",

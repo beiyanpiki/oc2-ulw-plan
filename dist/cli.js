@@ -12,7 +12,8 @@ function home() {
 }
 function scopeFor(global, project) {
     if (global) {
-        const configDir = join(home(), ".config", "opencode");
+        const configHome = process.env.XDG_CONFIG_HOME ?? join(home(), ".config");
+        const configDir = join(configHome, "opencode");
         return {
             configPath: join(configDir, "opencode.jsonc"),
             profileDir: join(configDir, "agents"),

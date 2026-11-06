@@ -48,7 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/beiyanpiki/oc2-ulw-plan/main/script
 Or run the script from a checkout:
 
 ```bash
-./scripts/install-release.sh --version v0.1.1 --global
+./scripts/install-release.sh --version v0.1.2 --global
 ```
 
 ### From a checkout

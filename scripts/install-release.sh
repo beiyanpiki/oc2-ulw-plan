@@ -29,6 +29,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 command -v node >/dev/null 2>&1 || { echo "node >=22.19 is required" >&2; exit 1; }
+command -v npm >/dev/null 2>&1 || { echo "npm is required to install runtime dependencies" >&2; exit 1; }
 command -v tar >/dev/null 2>&1 || { echo "tar is required" >&2; exit 1; }
 
 if [ -z "$VERSION" ]; then
@@ -45,7 +46,7 @@ case "$VERSION" in
 esac
 
 PKG_VERSION="${VERSION#v}"
-DEST="${OC2_ULW_INSTALL_DIR:-$HOME/.local/share/oc2-ulw-plan}"
+DEST="${OC2_ULW_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/oc2-ulw-plan}"
 ASSET="oc2-ulw-plan-$PKG_VERSION.tgz"
 URL="https://github.com/$REPO/releases/download/$VERSION/$ASSET"
 
@@ -54,6 +55,12 @@ echo "destination: $DEST"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 curl -fsSL "$URL" | tar -xzf - -C "$DEST" --strip-components=1
+
+echo "installing runtime dependencies"
+(
+  cd "$DEST"
+  npm install --omit=dev --no-audit --no-fund --ignore-scripts
+)
 
 if [ "$SCOPE" = "global" ]; then
   node "$DEST/dist/cli.js" init --global --plugin "$DEST"
@@ -66,5 +73,8 @@ fi
 
 echo
 echo "installed. Reload OpenCode, then check:"
-echo "  node \"$DEST/dist/cli.js\" doctor --global"
-echo "If you installed into a project, use --project \"$PROJECT_DIR\" instead of --global."
+if [ "$SCOPE" = "global" ]; then
+  echo "  node \"$DEST/dist/cli.js\" doctor --global"
+else
+  echo "  node \"$DEST/dist/cli.js\" doctor --project \"$PROJECT_DIR\""
+fi
