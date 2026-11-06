@@ -76,8 +76,7 @@ export async function waitForSessionIdle(
     if (busy !== undefined) sawBusy = true;
     if (sawBusy && idle !== undefined && (busy === undefined || idle >= busy)) return "idle";
     await new Promise<void>((resolveDelay) => {
-      const timer = setTimeout(resolveDelay, 500);
-      timer.unref();
+      setTimeout(resolveDelay, 500);
     });
   }
   return "timeout";
