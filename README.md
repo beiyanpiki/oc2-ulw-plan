@@ -29,20 +29,34 @@ text.
 
 ## Install
 
-Build the package first when using a checkout:
+### From a GitHub release
+
+The release installer downloads the packaged tarball, installs it outside the
+project, writes the five agent profiles and merges the plugin path into the
+OpenCode configuration:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/beiyanpiki/oc2-ulw-plan/main/scripts/install-release.sh | bash
+```
+
+Install into one project instead:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/beiyanpiki/oc2-ulw-plan/main/scripts/install-release.sh | bash -s -- --project /path/to/project
+```
+
+Or run the script from a checkout:
+
+```bash
+./scripts/install-release.sh --version v0.1.1 --global
+```
+
+### From a checkout
 
 ```bash
 npm install
 npm run build
 node dist/cli.js init --project /path/to/project --plugin /absolute/path/to/oc2-ulw-plan
-```
-
-For a published package, the default plugin entry is `oc2-ulw-plan`:
-
-```bash
-node dist/cli.js init --project /path/to/project
-# or for every project:
-node dist/cli.js init --global
 ```
 
 `init`:
@@ -247,6 +261,11 @@ default verification because it needs a configured provider and can spend money.
 
 - The host integration is verified on OpenCode 2.2.5/Linux; older versions may
   not have the same plugin contract.
+- OpenCode 2.2.5's `opencode plugin add` currently fails for Git package
+  specifiers in this environment because its bundled npm cannot prepare Git
+  dependencies. Use the release installer (which writes an explicit local
+  plugin path) or configure a local plugin directory; npm-registry installation
+  can be enabled once the package is published to an accessible registry.
 - Procedure checks require a capable verifier and a real surface. Missing tools
   make the run `inconclusive`, not successful.
 - The current worktree flow requires profiles to be discoverable from the
