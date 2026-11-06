@@ -1,0 +1,55 @@
+{
+  "name": "oc2-ulw-plan",
+  "version": "0.1.0",
+  "description": "OpenCode V2 spec planning and execution workflow: /ulw-plan, /ulw-execute, /ulw-status with frozen specs, evidence and independent review.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beiyanpiki/oc2-ulw-plan.git"
+  },
+  "main": "./dist/index.js",
+  "bin": {
+    "oc2-ulw-plan": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/",
+    "assets/",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit && node scripts/check-boundaries.mjs",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "tsx --test test/unit/*.test.ts",
+    "test:integration": "tsx --test test/integration/*.test.ts",
+    "test:host": "npm run build && tsx --test test/host/*.test.ts",
+    "test:smoke": "tsx --test test/smoke/*.test.ts",
+    "verify": "npm run lint && npm run test && npm run test:host && npm pack --dry-run"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.2.5",
+    "diff": "^8.0.2",
+    "jsonc-parser": "^3.3.1",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@opencode/client": "2.2.5",
+    "@types/diff": "^7.0.0",
+    "@types/node": "^24.10.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

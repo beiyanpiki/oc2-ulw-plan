@@ -1,0 +1,40 @@
+# NOTICE
+
+oc2-ulw-plan is an independent OpenCode V2 implementation inspired by the
+explore → plan → execute workflow of:
+
+- dsh-ulw-plan — https://github.com/beiyanpiki/dsh-ulw-plan
+  Copyright (c) 2026 dsh-ulw-plan contributors
+  Licensed under the MIT License.
+
+The reference revision used during design was
+d32c3b1aebead1ea5751185f82e532ba8dfd664d.
+
+This project does not include the DSH Host adapters, dual-review coordinator,
+execution lease, Cordis projection, or Codex compatibility layer from that
+repository. The workflow concepts, artifact discipline and selected edge-case
+tests were reimplemented against the OpenCode V2 plugin API.
+
+## Upstream MIT License
+
+MIT License
+
+Copyright (c) 2026 dsh-ulw-plan contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
