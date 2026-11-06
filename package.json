@@ -29,6 +29,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit && node scripts/check-boundaries.mjs",
     "build": "tsc -p tsconfig.build.json",
