@@ -32,8 +32,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          registry-url: https://registry.npmjs.org
+          node-version: "24"
 
       - name: Use a trusted-publishing-capable npm
         run: |
@@ -108,8 +107,15 @@ jobs:
           if [ -f "$HOME/.npmrc" ]; then
             sed -i '/_authToken/d' "$HOME/.npmrc"
           fi
+          test -z "${NODE_AUTH_TOKEN:-}" || {
+            echo "NODE_AUTH_TOKEN is set; refusing token-based publish" >&2
+            exit 1
+          }
+          echo "actions OIDC url: ${ACTIONS_ID_TOKEN_REQUEST_URL:+present}"
 
       - name: Publish to npm with trusted publishing (OIDC)
+        env:
+          NODE_AUTH_TOKEN: ""
         run: |
           VERSION="$(node -p "require('./package.json').version")"
-          npm publish "./oc2-ulw-plan-$VERSION.tgz" --access public
+          npm publish "./oc2-ulw-plan-$VERSION.tgz" --access public --loglevel verbose
