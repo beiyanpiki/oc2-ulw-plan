@@ -6,7 +6,7 @@ It keeps the useful discipline of explore → plan → execute — explore first
 executable spec, require independent plan review, record real evidence, and
 verify the landed product — while remaining a small OpenCode V2 plugin.
 
-Verified against **OpenCode 2.2.5** on Linux. The package is not affiliated with
+Verified against **OpenCode 2.2.5 and 2.2.6** on Linux. The package is not affiliated with
 OpenCode or with oh-my-openagent.
 
 ## What it gives you
@@ -77,7 +77,7 @@ curl -fsSL https://raw.githubusercontent.com/beiyanpiki/oc2-ulw-plan/main/script
 Or run the script from a checkout:
 
 ```bash
-./scripts/install-release.sh --version v0.2.1 --global
+./scripts/install-release.sh --version v0.2.2 --global
 ```
 
 ### From a checkout
@@ -377,7 +377,7 @@ default verification because it needs a configured provider and can spend money.
 
 ## Known limits
 
-- The host integration is verified on OpenCode 2.2.5/Linux; older versions may
+- The host integration is verified on OpenCode 2.2.5–2.2.6/Linux; older versions may
   not have the same plugin contract.
 - OpenCode 2.2.5's `opencode plugin add` can fail for Git package specifiers
   because its bundled npm cannot prepare Git dependencies. Install from the npm
