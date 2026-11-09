@@ -10,6 +10,7 @@ export async function createChildSession(ctx, input) {
         parentID: input.parentSessionID,
         title: input.title,
         agent: input.agent,
+        ...(input.model === undefined ? {} : { model: input.model }),
         location: { directory: input.workspace },
     }));
     if (created?.id === undefined)

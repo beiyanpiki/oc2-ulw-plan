@@ -1,5 +1,6 @@
 import { analyzeSpec, lintSpec, verifySpecPaths } from "../core/spec.js";
-import type { ActiveRun, RoleInvocation, RunRecord, SpecRecord } from "../core/types.js";
+import { roleBudget } from "../core/roles.js";
+import type { ActiveRun, RoleBudgetGrant, RoleInvocation, RunRecord, SpecRecord } from "../core/types.js";
 import { formatDiagnostics, readDiagnostics } from "../io/diagnostics.js";
 import { pidAlive, readLock } from "../io/lock.js";
 import { Runtime } from "./runtime.js";
@@ -41,6 +42,7 @@ export class DiagnoseService {
       .filter((invocation) => invocation.workspace === workspace)
       .sort((left, right) => right.createdAt - left.createdAt);
     const active = await store.getActive<ActiveRun>(sessionID);
+    const grants = (await store.listBudgetGrants<RoleBudgetGrant>()).map((entry) => entry.value);
     let lock: Awaited<ReturnType<typeof readLock>>;
     try {
       lock = await readLock(workspace);
@@ -82,6 +84,14 @@ export class DiagnoseService {
       lines.push(
         `- ${record.id}: status=${record.status} risk=${record.risk} strict=${record.strict === true ? "yes" : "no"} practical=${record.practical?.verdict ?? "none"} adversarial=${record.adversarial?.verdict ?? "none"} ${validity}`,
       );
+      for (const role of ["practical-reviewer", "adversarial-reviewer"] as const) {
+        const budget = roleBudget(invocations.map((value) => ({ id: value.id, value })), role, { workspace, specId: record.id });
+        const available = grants.filter((grant) => grant.specId === record.id && grant.role === role && grant.parentSessionID === sessionID && grant.targetHash === record.contentHash && grant.consumedBy === undefined).length;
+        lines.push(`  - ${role} budget: reports=${budget.reports}/${budget.maxReports} attempts=${budget.attempts}/${budget.maxAttempts} grants-used=${budget.grantsUsed} grants-available=${available}`);
+        if (budget.reports >= budget.maxReports || budget.attempts >= budget.maxAttempts) {
+          lines.push(`    user may authorize one extra attempt: /ulw-review-budget ${record.id} --role ${role} --reason "reason"`);
+        }
+      }
     }
 
     lines.push("", "## Runs");
@@ -100,10 +110,17 @@ export class DiagnoseService {
     if (invocations.length === 0) lines.push("- none");
     for (const invocation of invocations.slice(0, 20)) {
       lines.push(
-        `- ${invocation.role}: ${invocation.status} spec=${invocation.specId ?? "-"} run=${invocation.runId ?? "-"} task=${invocation.taskId ?? "-"} target=${invocation.targetHash?.slice(0, 12) ?? "-"}${invocation.error === undefined ? "" : ` error=${invocation.error}`}`,
+        `- ${invocation.role}: ${invocation.status} id=${invocation.id} spec=${invocation.specId ?? "-"} run=${invocation.runId ?? "-"} task=${invocation.taskId ?? "-"} target=${invocation.targetHash?.slice(0, 12) ?? "-"} model=${invocation.model === undefined ? "legacy/Host default" : `${invocation.model.providerID}/${invocation.model.id}${invocation.model.variant === undefined ? "" : `#${invocation.model.variant}`}`}${invocation.error === undefined ? "" : ` error=${invocation.error}`}`,
       );
       if (invocation.status === "failed" && invocation.error === "role finished without submitting ulw_report") {
         warnings.push(`${invocation.role} ${invocation.id} finished without a report`);
+      }
+    }
+
+    if (grants.length > 0) {
+      lines.push("", "## Review budget grants");
+      for (const grant of grants.sort((left, right) => right.createdAt - left.createdAt).slice(0, 20)) {
+        lines.push(`- ${grant.id}: ${grant.role} spec=${grant.specId} target=${grant.targetHash.slice(0, 12)} session=${grant.parentSessionID} consumed=${grant.consumedBy ?? "no"} reason=${grant.reason}`);
       }
     }
 

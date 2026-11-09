@@ -43,6 +43,11 @@ export declare class WorkspaceStore {
     setRun(id: string, value: unknown): Promise<void>;
     getInvocation<T>(id: string): Promise<T | undefined>;
     setInvocation(id: string, value: unknown): Promise<void>;
+    setBudgetGrant(id: string, value: unknown): Promise<void>;
+    listBudgetGrants<T>(): Promise<Array<{
+        id: string;
+        value: T;
+    }>>;
     getReport<T>(id: string): Promise<T | undefined>;
     setReport(id: string, value: unknown): Promise<void>;
     getBinding<T>(sessionID: string): Promise<T | undefined>;

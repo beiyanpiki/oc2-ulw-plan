@@ -123,6 +123,16 @@ export class WorkspaceStore {
     await this.store.set(this.invocationKey(id), value);
   }
 
+  async setBudgetGrant(id: string, value: unknown): Promise<void> {
+    await this.store.set(`v1/budget-grant/${this.workspaceKey}/${id}`, value);
+  }
+
+  async listBudgetGrants<T>(): Promise<Array<{ id: string; value: T }>> {
+    const prefix = `v1/budget-grant/${this.workspaceKey}/`;
+    const entries = await this.store.scan(prefix, 10_000);
+    return entries.map((entry) => ({ id: entry.key.slice(prefix.length), value: entry.value as T }));
+  }
+
   async getReport<T>(id: string): Promise<T | undefined> {
     return (await this.store.get(this.reportKey(id))) as T | undefined;
   }

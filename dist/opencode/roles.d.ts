@@ -1,4 +1,4 @@
-import type { Json, ReportRecord, RoleInvocation, RoleName, RunRecord, SpecRecord } from "../core/types.js";
+import type { Json, ReportRecord, RoleBudgetGrant, RoleInvocation, RoleName, RunRecord, SpecRecord } from "../core/types.js";
 import { Runtime } from "./runtime.js";
 export interface RoleBinding {
     schema: "ulw-role-binding/v1";
@@ -30,6 +30,7 @@ export interface RoleResult {
     status: RoleInvocation["status"];
     reportId?: string;
     verdict?: string;
+    report?: ReportRecord;
     summary: string;
 }
 export declare class RoleService {
@@ -47,10 +48,14 @@ export declare class RoleService {
     private loadResearchTarget;
     private loadRunTarget;
     private buildPrompt;
+    private result;
     private finish;
     wait(invocationID: string, parentSessionID: string, workspace: string, signal?: AbortSignal): Promise<RoleResult>;
     cancel(invocationID: string, parentSessionID: string, workspace: string): Promise<RoleResult>;
     report(sessionID: string, payload: Json): Promise<ReportRecord>;
+    private acceptReport;
+    /** Called only by the explicit user slash command, never by a model tool. */
+    grantPlanReviewAttempt(specId: string, role: RoleName, reason: string, sessionID: string): Promise<RoleBudgetGrant>;
     list(sessionID: string, workspace: string): Promise<RoleInvocation[]>;
     currentSpec(specId: string, workspace: string): Promise<SpecRecord>;
     currentRun(runId: string, workspace: string): Promise<RunRecord>;

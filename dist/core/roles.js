@@ -21,6 +21,8 @@ export function roleInvocations(invocations, role, target) {
         .filter((invocation) => {
         if (invocation.role !== role)
             return false;
+        if (target.workspace !== undefined && invocation.workspace !== target.workspace)
+            return false;
         const key = invocation.budgetKey ?? invocation.specId;
         if (target.specId !== undefined && key !== target.specId)
             return false;
@@ -34,14 +36,28 @@ export function roleInvocations(invocations, role, target) {
     })
         .sort((left, right) => left.createdAt - right.createdAt);
 }
+export function roleBudget(invocations, role, target, max = policyFor(role).maxPerTarget) {
+    const existing = roleInvocations(invocations, role, target);
+    const regular = existing.filter((invocation) => invocation.budgetGrantId === undefined);
+    return {
+        attempts: regular.length,
+        reports: regular.filter((invocation) => invocation.reportId !== undefined || invocation.status === "completed").length,
+        grantsUsed: existing.length - regular.length,
+        maxReports: max,
+        // Failed read-only infrastructure work is not a substantive review, but
+        // retries must still be bounded. Worker side effects never earn free retries.
+        maxAttempts: max + (policyFor(role).readOnly ? 1 : 0),
+    };
+}
 export function assertBudget(invocations, role, target, max = policyFor(role).maxPerTarget) {
     const existing = roleInvocations(invocations, role, target);
     const running = existing.filter((invocation) => invocation.status === "running");
     if (running.length > 0) {
         throw new UlwError("ROLE_IN_FLIGHT", `${role} already has an invocation for this target: ${running[0]?.id ?? ""}`);
     }
-    if (existing.length >= max) {
-        throw new UlwError("ROLE_BUDGET", `${role} budget exhausted (${existing.length}/${max}) for this target`);
+    const budget = roleBudget(invocations, role, target, max);
+    if (budget.reports >= budget.maxReports || budget.attempts >= budget.maxAttempts) {
+        throw new UlwError("ROLE_BUDGET", `${role} budget exhausted: reports ${budget.reports}/${budget.maxReports}, attempts ${budget.attempts}/${budget.maxAttempts}; additional attempts require an explicit user budget grant`);
     }
 }
 export function planRoles() {

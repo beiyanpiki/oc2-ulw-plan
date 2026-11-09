@@ -1,9 +1,11 @@
 import type { Context as PluginContext } from "@opencode/plugin/promise/plugin";
+import type { ModelRef } from "../core/types.js";
 export interface SessionInfo {
     id: string;
     parentID?: string;
     projectID?: string;
     agent?: string;
+    model?: ModelRef;
     title?: string;
     outcome?: "succeeded" | "failed" | "interrupted";
     location?: {
@@ -23,6 +25,7 @@ export declare function createChildSession(ctx: PluginContext, input: {
     title: string;
     agent: string;
     workspace: string;
+    model?: ModelRef;
 }): Promise<SessionInfo>;
 export declare function promptSession(ctx: PluginContext, sessionID: string, text: string, delivery?: "steer" | "queue"): Promise<void>;
 export declare function interruptSession(ctx: PluginContext, sessionID: string): Promise<boolean>;

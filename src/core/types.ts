@@ -169,6 +169,25 @@ export type RoleName =
   | "verifier"
   | "code-reviewer";
 
+export interface ModelRef {
+  providerID: string;
+  id: string;
+  variant?: string;
+}
+
+export interface RoleBudgetGrant {
+  schema: "ulw-role-budget-grant/v1";
+  id: string;
+  workspace: string;
+  specId: string;
+  role: "practical-reviewer" | "adversarial-reviewer";
+  parentSessionID: string;
+  targetHash: string;
+  reason: string;
+  createdAt: number;
+  consumedBy?: string;
+}
+
 export interface RoleInvocation {
   schema: "ulw-role-invocation/v1";
   id: string;
@@ -177,11 +196,13 @@ export interface RoleInvocation {
   parentSessionID: string;
   childSessionID: string;
   agent: string;
+  model?: ModelRef;
   specId?: string;
   runId?: string;
   taskId?: string;
   targetHash?: string;
   budgetKey?: string;
+  budgetGrantId?: string;
   status: "running" | "completed" | "failed" | "cancelled" | "timed_out";
   reportId?: string;
   createdAt: number;

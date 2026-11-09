@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { MemoryStore } from "../../src/core/store.js";
 import type { PluginContext } from "../../src/opencode/context.js";
 import type { SessionInfo } from "../../src/opencode/session.js";
+import type { ModelRef } from "../../src/core/types.js";
 
 export interface FakeContextOptions {
   workspace: string;
   projectID?: string;
+  agentModels?: Record<string, ModelRef>;
 }
 
 export interface FakeContext {
@@ -36,12 +38,13 @@ export function createFakeContext(options: FakeContextOptions): FakeContext {
       if (session === undefined) throw new Error(`no session ${sessionID}`);
       return session;
     },
-    create: async (input: { parentID?: string; title?: string; agent?: string; location?: { directory?: string }; permissions?: unknown }) => {
+    create: async (input: { parentID?: string; title?: string; agent?: string; model?: ModelRef; location?: { directory?: string }; permissions?: unknown }) => {
       const session: SessionInfo = {
         id: `ses_${randomUUID().replaceAll("-", "").slice(0, 20)}`,
         ...(input.parentID === undefined ? {} : { parentID: input.parentID }),
         projectID: options.projectID ?? "project",
         ...(input.agent === undefined ? {} : { agent: input.agent }),
+        ...(input.model === undefined ? {} : { model: input.model }),
         ...(input.title === undefined ? {} : { title: input.title }),
         location: { directory: input.location?.directory ?? options.workspace },
         time: { created: Date.now(), updated: Date.now() },
@@ -55,6 +58,7 @@ export function createFakeContext(options: FakeContextOptions): FakeContext {
       session.agent = agent;
     },
     prompt: async () => ({ id: "msg", sessionID: "ses", time: { created: Date.now() }, type: "user", payload: { text: "" }, delivery: "steer" }),
+    synthetic: async () => undefined,
     interrupt: async () => ({ interrupted: false }),
     remove: async () => undefined,
     wait: async () => undefined,
@@ -130,7 +134,7 @@ export function createFakeContext(options: FakeContextOptions): FakeContext {
     },
     agent: {
       list: async () => ({ data: [] }),
-      get: async ({ agentID }: { agentID: string }) => ({ id: agentID }),
+      get: async ({ agentID }: { agentID: string }) => ({ id: agentID, ...(options.agentModels?.[agentID] === undefined ? {} : { model: options.agentModels[agentID] }) }),
       transform: async () => ({ dispose: async () => undefined }),
       reload: async () => undefined,
     },

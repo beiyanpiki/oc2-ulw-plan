@@ -1,11 +1,13 @@
 import type { Context as PluginContext } from "@opencode/plugin/promise/plugin";
 import { UlwError } from "../core/errors.js";
+import type { ModelRef } from "../core/types.js";
 
 export interface SessionInfo {
   id: string;
   parentID?: string;
   projectID?: string;
   agent?: string;
+  model?: ModelRef;
   title?: string;
   outcome?: "succeeded" | "failed" | "interrupted";
   location?: { directory?: string };
@@ -21,12 +23,13 @@ export async function getSession(ctx: PluginContext, sessionID: string): Promise
 
 export async function createChildSession(
   ctx: PluginContext,
-  input: { parentSessionID: string; title: string; agent: string; workspace: string },
+  input: { parentSessionID: string; title: string; agent: string; workspace: string; model?: ModelRef },
 ): Promise<SessionInfo> {
   const created = (await ctx.session.create({
     parentID: input.parentSessionID as never,
     title: input.title,
     agent: input.agent as never,
+    ...(input.model === undefined ? {} : { model: input.model as never }),
     location: { directory: input.workspace },
   })) as unknown as SessionInfo;
   if (created?.id === undefined) throw new UlwError("SESSION_CREATE", "child session creation returned no id");

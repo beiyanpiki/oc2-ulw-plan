@@ -6,6 +6,7 @@ import { isWithin, isSpecSlug } from "../core/spec.js";
 import { DiagnoseService } from "./diagnose-service.js";
 import { SpecService } from "./spec-service.js";
 import { RunService } from "./run-service.js";
+import { RoleService } from "./roles.js";
 import { prepareWorktree } from "./worktree.js";
 function parseArgs(text, valueFlags, flags) {
     const tokens = text.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
@@ -47,6 +48,7 @@ function promptRequest(invocation, text) {
 export async function registerCommands(ctx, runtime) {
     const specs = new SpecService(runtime);
     const runs = new RunService(runtime);
+    const roles = new RoleService(runtime);
     await ctx.command.transform((editor) => {
         editor.add({
             name: "ulw-plan",
@@ -104,6 +106,36 @@ export async function registerCommands(ctx, runtime) {
                     "Do not implement. Finish by publishing the reviewed spec and stopping with the handoff command.",
                 ].filter(Boolean).join("\n");
                 await ctx.session.prompt(promptRequest(invocation, prompt));
+            },
+        });
+        editor.add({
+            name: "ulw-review-budget",
+            description: "Show review budget with --status, or explicitly authorize one extra plan-review attempt for the current spec hash. Never starts review or grants approval.",
+            execute: async (invocation) => {
+                const args = parseArgs(commandText(invocation), ["--role", "--reason"], ["--status"]);
+                const specId = args.positionals[0];
+                const role = args.values.get("--role");
+                const reason = args.values.get("--reason");
+                if (args.flags.has("--status") && args.positionals.length === 1 && specId !== undefined && isSpecSlug(specId) && role === undefined && reason === undefined) {
+                    await specs.status(specId, invocation.sessionID);
+                    const snapshot = await new DiagnoseService(runtime).report(invocation.sessionID, 20);
+                    await ctx.session.synthetic({
+                        sessionID: invocation.sessionID, text: snapshot.text,
+                        metadata: { source: "ulw-review-budget", action: "status" }, resume: false,
+                    });
+                    return;
+                }
+                if (args.positionals.length !== 1 || specId === undefined || !isSpecSlug(specId) ||
+                    args.flags.has("--status") || (role !== "practical-reviewer" && role !== "adversarial-reviewer") || reason === undefined) {
+                    throw new UlwError("ARGS", 'usage: /ulw-review-budget <spec-id> --status OR --role practical-reviewer|adversarial-reviewer --reason "why one more attempt is authorized"');
+                }
+                const grant = await roles.grantPlanReviewAttempt(specId, role, reason, invocation.sessionID);
+                await ctx.session.synthetic({
+                    sessionID: invocation.sessionID,
+                    text: `Review budget grant ${grant.id}: one extra ${grant.role} attempt for ${grant.specId} @ ${grant.targetHash}. Reason: ${grant.reason}. No review was started and no approval was changed.`,
+                    metadata: { source: "ulw-review-budget", grantId: grant.id },
+                    resume: false,
+                });
             },
         });
         editor.add({

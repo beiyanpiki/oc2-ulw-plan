@@ -8,6 +8,10 @@ import { DiagnoseService } from "./diagnose-service.js";
 function textResult(content, metadata) {
     return metadata === undefined ? { content } : { content, metadata };
 }
+function roleResult(result) {
+    const content = result.report === undefined ? result.summary : `${result.summary}\n\n${JSON.stringify(result.report, null, 2)}`;
+    return textResult(content, { ...result });
+}
 function validationText(result) {
     const errors = result.diagnostics.filter((entry) => entry.severity === "error");
     const warnings = result.diagnostics.filter((entry) => entry.severity === "warning");
@@ -56,6 +60,7 @@ export async function registerTools(ctx, runtime) {
     await ctx.tool.transform((editor) => {
         editor.add({
             name: "ulw_spec",
+            options: { codemode: false },
             description: "Create, read, validate, review and publish an oc2-ulw executable spec. Start with action=template when unsure about the YAML shape.",
             input: {
                 type: "object",
@@ -206,6 +211,7 @@ export async function registerTools(ctx, runtime) {
         });
         editor.add({
             name: "ulw_run",
+            options: { codemode: false },
             description: "Inspect, claim, check-point, pause or finalize an authorized ulw run.",
             input: {
                 type: "object",
@@ -266,6 +272,7 @@ export async function registerTools(ctx, runtime) {
         });
         editor.add({
             name: "ulw_check",
+            options: { codemode: false },
             description: "Run one frozen command check from the active spec and persist real exit/output evidence.",
             input: {
                 type: "object",
@@ -295,7 +302,8 @@ export async function registerTools(ctx, runtime) {
         });
         editor.add({
             name: "ulw_role",
-            description: "Start or wait for an independent ulw role. explorer/librarian/consultant accept a draft id or only an assignment; reviewers need a spec; workers and final roles need a run. background=true returns immediately: call action=wait with the invocation id before using the result.",
+            options: { codemode: false },
+            description: "Start or wait for an independent ulw role. explorer/librarian/consultant accept a draft id or only an assignment; reviewers need a spec; workers and final roles need a run. background=true returns immediately: call action=wait with the invocation id to retrieve the full bound report, blockers and evidence.",
             input: {
                 type: "object",
                 properties: {
@@ -327,11 +335,11 @@ export async function registerTools(ctx, runtime) {
                 }
                 if (action === "wait") {
                     const result = await roles.wait(stringInput(input, "invocationId"), tool.sessionID, workspace, tool.signal);
-                    return textResult(result.summary, { ...result });
+                    return roleResult(result);
                 }
                 if (action === "cancel") {
                     const result = await roles.cancel(stringInput(input, "invocationId"), tool.sessionID, workspace);
-                    return textResult(result.summary, { ...result });
+                    return roleResult(result);
                 }
                 if (action === "start") {
                     const role = stringInput(input, "role");
@@ -343,19 +351,20 @@ export async function registerTools(ctx, runtime) {
                         ...(stringInput(input, "assignment", false) === undefined ? {} : { assignment: stringInput(input, "assignment", false) }),
                         background: boolInput(input, "background"),
                     }, { sessionID: tool.sessionID, agent: tool.agent, signal: tool.signal });
-                    return textResult(result.summary, { ...result });
+                    return roleResult(result);
                 }
                 throw new UlwError("ACTION_UNKNOWN", `unknown ulw_role action: ${action}`);
             },
         });
         editor.add({
             name: "ulw_report",
-            description: "Submit a structured report from a bound ulw role session. The Host binds identity and target; callers cannot self-approve.",
+            options: { codemode: false },
+            description: "Submit a structured report from a bound ulw role session. Pass {payload: {...}}; research summary belongs in payload.summary. The Host binds identity and target; callers cannot self-approve.",
             input: {
                 type: "object",
                 properties: {
-                    payload: { type: "object" },
-                    summary: { type: "string" },
+                    payload: { type: "object", additionalProperties: true, description: "The complete role report. Research roles require summary inside this object; reviewers require verdict and blockers/findings/coverage." },
+                    summary: { type: "string", description: "Legacy optional label; does not replace payload.summary." },
                 },
                 required: ["payload"],
                 additionalProperties: false,
@@ -376,6 +385,7 @@ export async function registerTools(ctx, runtime) {
         });
         editor.add({
             name: "ulw_diagnose",
+            options: { codemode: false },
             description: "Read-only Host snapshot of specs, runs, role invocations, the workspace lock and recent failures. Use it to monitor a long ulw flow or to explain a stuck run.",
             input: {
                 type: "object",

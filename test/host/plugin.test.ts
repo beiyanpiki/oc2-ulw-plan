@@ -105,7 +105,7 @@ test("isolated OpenCode 2 host loads the plugin, commands, agents and skills", {
       "ulw commands",
     );
     const commands = await json(`${base}/api/command?${query}`);
-    for (const name of ["ulw-plan", "ulw-execute", "ulw-status"]) {
+    for (const name of ["ulw-plan", "ulw-execute", "ulw-status", "ulw-review-budget"]) {
       assert.ok(commands.data.some((entry: { name?: string }) => entry.name === name), `missing command ${name}`);
     }
     const agents = await json(`${base}/api/agent?${query}`);

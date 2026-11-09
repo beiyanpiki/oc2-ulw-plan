@@ -90,6 +90,14 @@ export class WorkspaceStore {
     async setInvocation(id, value) {
         await this.store.set(this.invocationKey(id), value);
     }
+    async setBudgetGrant(id, value) {
+        await this.store.set(`v1/budget-grant/${this.workspaceKey}/${id}`, value);
+    }
+    async listBudgetGrants() {
+        const prefix = `v1/budget-grant/${this.workspaceKey}/`;
+        const entries = await this.store.scan(prefix, 10_000);
+        return entries.map((entry) => ({ id: entry.key.slice(prefix.length), value: entry.value }));
+    }
     async getReport(id) {
         return (await this.store.get(this.reportKey(id)));
     }

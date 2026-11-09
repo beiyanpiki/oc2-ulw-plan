@@ -22,6 +22,8 @@ OpenCode or with oh-my-openagent.
   orphaned run whose owner session is idle or interrupted.
 - `/ulw-status [spec-id|run-id] [--diagnose]` — show Host-computed state,
   evidence, roles, the next action and recent failures.
+- `/ulw-review-budget <spec-id> --role practical-reviewer|adversarial-reviewer --reason "reason"`
+  — explicitly authorize one extra plan-review attempt for the current spec hash.
 - `oc2-ulw-plan diagnose --project <dir>` — validate every spec on disk and
   print the lock, artifacts and recent diagnostics.
 - Optional `--strict`, `--consult`, `--parallel` and `--worktree auto|path`.
@@ -141,6 +143,39 @@ worktree: install globally, or keep `.opencode/agents/` committed.
 D/E/G/H run in fresh child sessions. Their reports are bound by the Host to the
 invocation, child session and target digest; a caller cannot pass arbitrary
 approval fields. A worker report is a completion claim, never approval.
+
+Child roles use their profile's explicitly configured model, or inherit the
+parent session's selected model and variant (then its agent model). They no
+longer silently fall back to a different Host-default model. Diagnostics show
+the model recorded at dispatch.
+
+Read-only roles have one bounded failure-retry allowance: for example, a
+practical review that requested changes followed by a timeout leaves one more
+attempt, but two substantive reports still exhaust the ordinary two-review
+budget. At most three ordinary attempts are allowed. Spec revisions do not
+reset these counters, and workers receive no extra side-effecting attempts.
+
+If that budget is exhausted, the **user**, not the planner, may run:
+
+```text
+/ulw-review-budget login-rate-limit --role practical-reviewer --reason "Retry after a Host timeout"
+```
+
+Use `/ulw-review-budget login-rate-limit --status` to inspect the Host-computed
+counters without generating a model response or granting another attempt.
+
+This records one single-use grant bound to the workspace, parent session, role
+and current spec hash. It preserves all invocation history, does not resume the
+session or start a review, and never grants approval. A changed spec needs a new
+grant if its ordinary budget is still exhausted. `ulw_diagnose` shows counters
+and grant history. There is deliberately no model tool for granting budget.
+
+`ulw_role start` (foreground) and `wait` return the complete Host-bound report,
+including blockers and evidence, in tool text. Use `wait` again to retrieve a
+completed report instead of querying the Host database or localhost HTTP API.
+Roles submit `ulw_report` as `{"payload": {...}}`; research summaries belong
+in `payload.summary`. ULW tools are explicitly exposed outside Code Mode, so
+planning/review profiles can keep `execute`, shell and edits denied.
 
 ## Spec format
 
