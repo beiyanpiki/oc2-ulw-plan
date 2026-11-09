@@ -33,8 +33,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
           registry-url: https://registry.npmjs.org
+
+      - name: Use a trusted-publishing-capable npm
+        run: |
+          node -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 14)) { console.error(`Node ${process.versions.node} is too old for trusted publishing`); process.exit(1); }'
+          npm install -g npm@latest
+          npm --version
 
       - run: npm ci
       - run: npm run lint
@@ -98,21 +103,13 @@ jobs:
               --notes-file /tmp/notes.md
           fi
 
-      - name: Check npm credentials
-        id: npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Remove token auth so npm uses OIDC
         run: |
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
+          if [ -f "$HOME/.npmrc" ]; then
+            sed -i '/_authToken/d' "$HOME/.npmrc"
           fi
 
-      - name: Publish to npm
-        if: steps.npm.outputs.available == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm with trusted publishing (OIDC)
         run: |
           VERSION="$(node -p "require('./package.json').version")"
-          npm publish "./oc2-ulw-plan-$VERSION.tgz" --access public --provenance
+          npm publish "./oc2-ulw-plan-$VERSION.tgz" --access public

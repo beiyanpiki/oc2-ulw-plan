@@ -319,10 +319,19 @@ default verification because it needs a configured provider and can spend money.
   pushes to `main` and on pull requests.
 - `.github/workflows/release.yml` runs on `v*` tags. It re-runs the checks,
   builds `npm pack`, creates or updates the GitHub release with the tarball and
-  `scripts/install-release.sh`, and publishes the tarball to npm.
-- npm publishing requires the repository secret `NPM_TOKEN`: an npm automation
-  or granular token with publish rights and 2FA bypass. Without it the release
-  job still creates the GitHub release and skips the npm step.
+  `scripts/install-release.sh`, and publishes the tarball to npm with
+  **Trusted Publishing (OIDC)**. No long-lived npm token is stored in CI.
+- Configure the npm trusted publisher once on npmjs.com:
+  - provider: GitHub Actions
+  - organization/user: `beiyanpiki`
+  - repository: `oc2-ulw-plan`
+  - workflow filename: `release.yml`
+  - allowed actions: `npm publish`
+- A newly created trusted publisher must complete its first publish within two
+  days. After the first publish, the configuration is validated and bound to the
+  repository's immutable identity.
+- Recommended after the first publish: package Settings → Publishing access →
+  require 2FA and disallow token publishing.
 - To cut a release: update `package.json`, commit, then
   `git tag vX.Y.Z && git push origin main --tags`. The tag must match the
   package version; the workflow refuses a mismatch.
