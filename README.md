@@ -321,12 +321,16 @@ default verification because it needs a configured provider and can spend money.
   builds `npm pack`, creates or updates the GitHub release with the tarball and
   `scripts/install-release.sh`, and publishes the tarball to npm with
   **Trusted Publishing (OIDC)**. No long-lived npm token is stored in CI.
-- Configure the npm trusted publisher once on npmjs.com:
+- Configure the npm trusted publisher once on npmjs.com (or with the npm CLI,
+  which prompts for 2FA):
   - provider: GitHub Actions
   - organization/user: `beiyanpiki`
   - repository: `oc2-ulw-plan`
   - workflow filename: `release.yml`
   - allowed actions: `npm publish`
+  ```bash
+  npm trust github oc2-ulw-plan --repo beiyanpiki/oc2-ulw-plan --file release.yml --allow-publish
+  ```
 - A newly created trusted publisher must complete its first publish within two
   days. After the first publish, the configuration is validated and bound to the
   repository's immutable identity.
